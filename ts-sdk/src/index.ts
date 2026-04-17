@@ -59,6 +59,14 @@ export interface WebhookEvent {
   updated_at: string;
 }
 
+export type WebhookEventStatus = "skipped" | "delivered" | "failed";
+
+export interface WebhookEventListFilters {
+  requestId?: string;
+  status?: WebhookEventStatus;
+  eventType?: string;
+}
+
 export class ClawPassClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
@@ -111,9 +119,31 @@ export class ClawPassClient {
     return this.request<ApproverSummary>(`/v1/approvers/${approverId}/summary`);
   }
 
-  listWebhookEvents(requestId?: string) {
-    const search = requestId ? `?${new URLSearchParams({ request_id: requestId }).toString()}` : "";
+  listWebhookEvents(filters?: string | WebhookEventListFilters) {
+    const normalized =
+      typeof filters === "string"
+        ? { requestId: filters }
+        : (filters ?? {});
+    const params = new URLSearchParams();
+    if (normalized.requestId) {
+      params.set("request_id", normalized.requestId);
+    }
+    if (normalized.status) {
+      params.set("status", normalized.status);
+    }
+    if (normalized.eventType) {
+      params.set("event_type", normalized.eventType);
+    }
+    const query = params.toString();
+    const search = query ? `?${query}` : "";
     return this.request<WebhookEvent[]>(`/v1/webhook-events${search}`);
+  }
+
+  redeliverWebhookEvent(eventId: string) {
+    return this.request<WebhookEvent>(`/v1/webhook-events/${eventId}/redeliver`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   }
 
   startDecision(requestId: string, approverId: string, decision: DecisionValue, method: DecisionMethod) {

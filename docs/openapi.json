@@ -525,6 +525,38 @@
               ],
               "title": "Request Id"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
           }
         ],
         "responses": {
@@ -538,6 +570,48 @@
                     "$ref": "#/components/schemas/WebhookEventResponse"
                   },
                   "title": "Response Webhook Events V1 Webhook Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhook-events/{event_id}/redeliver": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Redeliver Webhook Event",
+        "operationId": "redeliver_webhook_event_v1_webhook_events__event_id__redeliver_post",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEventResponse"
                 }
               }
             }

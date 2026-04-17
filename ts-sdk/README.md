@@ -13,5 +13,6 @@ const request = await client.createApprovalRequest({
 
 const pending = await client.listApprovalRequests("pending");
 const cancelled = await client.cancelApprovalRequest(request.id, "operator cancelled");
-const events = await client.listWebhookEvents(request.id);
+const failed = await client.listWebhookEvents({ requestId: request.id, status: "failed", eventType: "approval.pending" });
+const retried = await client.redeliverWebhookEvent(failed[0].id);
 ```

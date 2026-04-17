@@ -7,7 +7,9 @@ from typing import Any
 import httpx
 
 from clawpass_server.core.config import Settings
+from clawpass_server.core.constants import WEBHOOK_STATUS_DELIVERED, WEBHOOK_STATUS_FAILED, WEBHOOK_STATUS_SKIPPED
 from clawpass_server.core.database import Database
+from clawpass_server.core.schemas import WebhookEventResponse
 from clawpass_server.core.utils import json_dumps, stable_id, utc_now_iso
 
 MAX_WEBHOOK_DELIVERY_ATTEMPTS = 2
@@ -19,11 +21,11 @@ class WebhookDispatcher:
         self._db = db
         self._settings = settings
 
-    def dispatch(self, *, request_id: str, event_type: str, payload: dict[str, Any], callback_url: str | None) -> None:
+    def dispatch(self, *, request_id: str, event_type: str, payload: dict[str, Any], callback_url: str | None) -> WebhookEventResponse:
         now = utc_now_iso()
         event_id = stable_id("whevt")
         payload_json = json_dumps(payload)
-        status = "skipped"
+        status = WEBHOOK_STATUS_SKIPPED
         error: str | None = None
         attempts = 0
 
@@ -47,11 +49,11 @@ class WebhookDispatcher:
                     try:
                         response = client.post(callback_url, content=payload_json, headers=headers)
                         response.raise_for_status()
-                        status = "delivered"
+                        status = WEBHOOK_STATUS_DELIVERED
                         error = None
                         break
                     except Exception as exc:  # pragma: no cover - exercised in integration tests with monkeypatch
-                        status = "failed"
+                        status = WEBHOOK_STATUS_FAILED
                         error = str(exc)
                         if not self._should_retry(exc) or attempt == MAX_WEBHOOK_DELIVERY_ATTEMPTS:
                             break
@@ -76,6 +78,8 @@ class WebhookDispatcher:
                 now,
             ),
         )
+        row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
+        return WebhookEventResponse(**row)
 
     def _should_retry(self, exc: Exception) -> bool:
         if isinstance(exc, httpx.HTTPStatusError):
