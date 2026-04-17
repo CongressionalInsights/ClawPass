@@ -53,6 +53,8 @@ clawpass-server
 - `GET /v1/approvers/{approver_id}/summary`
 - `GET /v1/webhook-events`
 - `GET /v1/webhook-summary`
+- `GET /v1/webhook-endpoints/summary`
+- `POST /v1/webhook-events/prune`
 - `POST /v1/webhook-events/{id}/redeliver`
 - `POST /v1/webhook-events/{id}/retry-now`
 

@@ -96,6 +96,17 @@ class ClawPassClient:
         response.raise_for_status()
         return response.json()
 
+    def list_webhook_endpoint_summaries(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        params = {"limit": limit} if limit is not None else None
+        response = self._client.get("/v1/webhook-endpoints/summary", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def prune_webhook_events(self) -> dict[str, Any]:
+        response = self._client.post("/v1/webhook-events/prune", json={})
+        response.raise_for_status()
+        return response.json()
+
     def redeliver_webhook_event(self, event_id: str) -> dict[str, Any]:
         response = self._client.post(f"/v1/webhook-events/{event_id}/redeliver", json={})
         response.raise_for_status()

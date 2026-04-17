@@ -48,6 +48,8 @@ def _settings(db_path: Path) -> Settings:
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,
+        webhook_event_retention_days=14,
+        webhook_retry_history_retention_days=30,
         webhook_secret=None,
     )
 

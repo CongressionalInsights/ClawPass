@@ -154,6 +154,30 @@ class WebhookDeliverySummary(BaseModel):
     alerts: list[str]
 
 
+class WebhookEndpointSummary(BaseModel):
+    callback_url: str
+    total_events: int
+    queued_count: int
+    stalled_count: int
+    delivered_count: int
+    failed_count: int
+    dead_lettered_count: int
+    attempted_count: int
+    failure_rate: float
+    next_attempt_at: str | None
+    last_event_at: str | None
+    latest_error: str | None
+    health_state: str
+
+
+class WebhookPruneResult(BaseModel):
+    deleted_delivered_or_skipped: int
+    deleted_retry_history_events: int
+    total_deleted: int
+    delivered_or_skipped_cutoff: str | None
+    retry_history_cutoff: str | None
+
+
 class ApproverSummary(BaseModel):
     id: str
     email: str

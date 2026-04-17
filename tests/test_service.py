@@ -309,6 +309,148 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
     assert "failure rate" in summary.alerts[1]
 
 
+def test_webhook_endpoint_summaries_group_failures_by_callback_url(service):
+    now = utc_now()
+    future_available_at = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    old_created_at = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    current_created_at = now.isoformat().replace("+00:00", "Z")
+    service._db.execute_many(
+        [
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-delivered",
+                    "req-endpoint",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-endpoint"}),
+                    "https://example.com/webhooks/a",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_created_at,
+                    old_created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-dead",
+                    "req-endpoint",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-endpoint"}),
+                    "https://example.com/webhooks/a",
+                    "failed",
+                    "upstream timeout",
+                    2,
+                    None,
+                    None,
+                    None,
+                    None,
+                    1,
+                    current_created_at,
+                    "Automatic retry budget exhausted after 1 queued retry.",
+                    current_created_at,
+                    current_created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-queued",
+                    "req-endpoint",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-endpoint"}),
+                    "https://example.com/webhooks/a",
+                    "queued",
+                    None,
+                    0,
+                    None,
+                    None,
+                    future_available_at,
+                    "whevt-endpoint-dead",
+                    2,
+                    None,
+                    None,
+                    current_created_at,
+                    current_created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-healthy",
+                    "req-endpoint-b",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-endpoint-b"}),
+                    "https://example.com/webhooks/b",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    current_created_at,
+                    current_created_at,
+                ),
+            ),
+        ]
+    )
+
+    summaries = service.list_webhook_endpoint_summaries(limit=10)
+    assert summaries[0].callback_url == "https://example.com/webhooks/a"
+    assert summaries[0].health_state == "critical"
+    assert summaries[0].total_events == 3
+    assert summaries[0].queued_count == 1
+    assert summaries[0].delivered_count == 1
+    assert summaries[0].failed_count == 1
+    assert summaries[0].dead_lettered_count == 1
+    assert summaries[0].attempted_count == 2
+    assert summaries[0].failure_rate == 0.5
+    assert summaries[0].next_attempt_at == future_available_at
+    assert summaries[0].latest_error == "upstream timeout"
+    assert summaries[1].callback_url == "https://example.com/webhooks/b"
+    assert summaries[1].health_state == "healthy"
+
+
 def test_failed_delivery_schedules_automatic_retry_with_backoff(monkeypatch, service):
     tasks = []
 
@@ -456,6 +598,205 @@ def test_retry_schedule_caps_delay_and_marks_dead_letter_when_budget_exhausted(m
     assert summary.scheduled_retry_count == 0
     assert summary.dead_lettered_count == 1
     assert any("dead-lettered" in alert for alert in summary.alerts)
+
+
+def test_prune_webhook_history_removes_old_settled_events_but_keeps_active_rows(service):
+    now = utc_now()
+    old_delivered_at = (now - timedelta(days=20)).isoformat().replace("+00:00", "Z")
+    old_retry_at = (now - timedelta(days=40)).isoformat().replace("+00:00", "Z")
+    recent_at = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    old_queued_at = (now - timedelta(days=40)).isoformat().replace("+00:00", "Z")
+    service._db.execute_many(
+        [
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-delivered",
+                    "req-prune-delivered",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-delivered"}),
+                    "https://example.com/webhooks/prune",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_delivered_at,
+                    old_delivered_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-skipped",
+                    "req-prune-skipped",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-skipped"}),
+                    "https://example.com/webhooks/prune",
+                    "skipped",
+                    None,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_delivered_at,
+                    old_delivered_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-root",
+                    "req-prune-chain",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-chain"}),
+                    "https://example.com/webhooks/prune",
+                    "failed",
+                    "timed out",
+                    2,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_retry_at,
+                    old_retry_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-child",
+                    "req-prune-chain",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-chain"}),
+                    "https://example.com/webhooks/prune",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    "whevt-prune-root",
+                    1,
+                    None,
+                    None,
+                    old_retry_at,
+                    old_retry_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-recent",
+                    "req-prune-recent",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-recent"}),
+                    "https://example.com/webhooks/prune",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    recent_at,
+                    recent_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-prune-queued",
+                    "req-prune-queued",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-prune-queued"}),
+                    "https://example.com/webhooks/prune",
+                    "queued",
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_queued_at,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_queued_at,
+                    old_queued_at,
+                ),
+            ),
+        ]
+    )
+
+    result = service.prune_webhook_history()
+    assert result.deleted_delivered_or_skipped == 2
+    assert result.deleted_retry_history_events == 2
+    assert result.total_deleted == 4
+
+    remaining_ids = {event.id for event in service.list_webhook_events(limit=50)}
+    assert "whevt-prune-delivered" not in remaining_ids
+    assert "whevt-prune-skipped" not in remaining_ids
+    assert "whevt-prune-root" not in remaining_ids
+    assert "whevt-prune-child" not in remaining_ids
+    assert "whevt-prune-recent" in remaining_ids
+    assert "whevt-prune-queued" in remaining_ids
 
 
 def test_webhook_delivery_lease_prevents_duplicate_multi_instance_delivery(monkeypatch, settings):

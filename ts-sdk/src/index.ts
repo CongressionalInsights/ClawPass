@@ -90,6 +90,30 @@ export interface WebhookDeliverySummary {
   alerts: string[];
 }
 
+export interface WebhookEndpointSummary {
+  callback_url: string;
+  total_events: number;
+  queued_count: number;
+  stalled_count: number;
+  delivered_count: number;
+  failed_count: number;
+  dead_lettered_count: number;
+  attempted_count: number;
+  failure_rate: number;
+  next_attempt_at: string | null;
+  last_event_at: string | null;
+  latest_error: string | null;
+  health_state: string;
+}
+
+export interface WebhookPruneResult {
+  deleted_delivered_or_skipped: number;
+  deleted_retry_history_events: number;
+  total_deleted: number;
+  delivered_or_skipped_cutoff: string | null;
+  retry_history_cutoff: string | null;
+}
+
 export interface WebhookEventListFilters {
   requestId?: string;
   status?: WebhookEventStatus;
@@ -178,6 +202,18 @@ export class ClawPassClient {
 
   getWebhookSummary() {
     return this.request<WebhookDeliverySummary>("/v1/webhook-summary");
+  }
+
+  listWebhookEndpointSummaries(limit?: number) {
+    const search = limit === undefined ? "" : `?${new URLSearchParams({ limit: String(limit) }).toString()}`;
+    return this.request<WebhookEndpointSummary[]>(`/v1/webhook-endpoints/summary${search}`);
+  }
+
+  pruneWebhookEvents() {
+    return this.request<WebhookPruneResult>("/v1/webhook-events/prune", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   }
 
   redeliverWebhookEvent(eventId: string) {

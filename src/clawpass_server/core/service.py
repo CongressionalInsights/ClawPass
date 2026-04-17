@@ -53,7 +53,9 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterStartRequest,
     WebAuthnRegisterStartResponse,
     WebhookDeliverySummary,
+    WebhookEndpointSummary,
     WebhookEventResponse,
+    WebhookPruneResult,
 )
 from clawpass_server.core.utils import add_minutes_iso, json_dumps, parse_iso, stable_id, token_urlsafe, utc_now, utc_now_iso
 from clawpass_server.core.webhooks import WebhookDispatcher
@@ -750,6 +752,188 @@ class ClawPassService:
             alerts=alerts,
         )
 
+    def list_webhook_endpoint_summaries(self, *, limit: int = 20) -> list[WebhookEndpointSummary]:
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 100.")
+
+        now = utc_now()
+        rows = self._db.fetchall(
+            """
+            SELECT callback_url, status, available_at, lease_expires_at, dead_lettered_at, last_error, created_at, updated_at
+            FROM webhook_events
+            WHERE callback_url IS NOT NULL
+            ORDER BY updated_at DESC, id DESC
+            """
+        )
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            callback_url = row["callback_url"]
+            summary = grouped.setdefault(
+                callback_url,
+                {
+                    "callback_url": callback_url,
+                    "total_events": 0,
+                    "queued_count": 0,
+                    "stalled_count": 0,
+                    "delivered_count": 0,
+                    "failed_count": 0,
+                    "dead_lettered_count": 0,
+                    "next_attempt_at": None,
+                    "last_event_at": None,
+                    "latest_error": None,
+                },
+            )
+            summary["total_events"] += 1
+            status = row["status"]
+            if status == WEBHOOK_STATUS_QUEUED:
+                summary["queued_count"] += 1
+                available_at = row.get("available_at")
+                if available_at and parse_iso(available_at) > now:
+                    current_next = summary["next_attempt_at"]
+                    if current_next is None or available_at < current_next:
+                        summary["next_attempt_at"] = available_at
+                lease_expires_at = row.get("lease_expires_at")
+                if (not available_at or parse_iso(available_at) <= now) and (
+                    not lease_expires_at or parse_iso(lease_expires_at) <= now
+                ):
+                    summary["stalled_count"] += 1
+            elif status == WEBHOOK_STATUS_DELIVERED:
+                summary["delivered_count"] += 1
+            elif status == WEBHOOK_STATUS_FAILED:
+                summary["failed_count"] += 1
+
+            if row.get("dead_lettered_at"):
+                summary["dead_lettered_count"] += 1
+            if row.get("last_error") and summary["latest_error"] is None:
+                summary["latest_error"] = row["last_error"]
+            created_at = row["created_at"]
+            if summary["last_event_at"] is None or created_at > summary["last_event_at"]:
+                summary["last_event_at"] = created_at
+
+        endpoint_summaries: list[WebhookEndpointSummary] = []
+        severity_order = {"critical": 0, "warning": 1, "degraded": 2, "healthy": 3}
+        for entry in grouped.values():
+            attempted_count = entry["delivered_count"] + entry["failed_count"]
+            failure_rate = entry["failed_count"] / attempted_count if attempted_count else 0.0
+            if entry["dead_lettered_count"] > 0:
+                health_state = "critical"
+            elif entry["stalled_count"] > 0 or failure_rate >= self._settings.webhook_failure_rate_alert_threshold:
+                health_state = "warning"
+            elif entry["queued_count"] > 0:
+                health_state = "degraded"
+            else:
+                health_state = "healthy"
+            endpoint_summaries.append(
+                WebhookEndpointSummary(
+                    callback_url=entry["callback_url"],
+                    total_events=entry["total_events"],
+                    queued_count=entry["queued_count"],
+                    stalled_count=entry["stalled_count"],
+                    delivered_count=entry["delivered_count"],
+                    failed_count=entry["failed_count"],
+                    dead_lettered_count=entry["dead_lettered_count"],
+                    attempted_count=attempted_count,
+                    failure_rate=failure_rate,
+                    next_attempt_at=entry["next_attempt_at"],
+                    last_event_at=entry["last_event_at"],
+                    latest_error=entry["latest_error"],
+                    health_state=health_state,
+                )
+            )
+        endpoint_summaries.sort(
+            key=lambda summary: (
+                severity_order.get(summary.health_state, 99),
+                -(parse_iso(summary.last_event_at).timestamp()) if summary.last_event_at else float("inf"),
+                summary.callback_url,
+            )
+        )
+        return endpoint_summaries[:limit]
+
+    def prune_webhook_history(self, *, emit_audit: bool = False, actor: str = "system") -> WebhookPruneResult:
+        now = utc_now()
+        delivered_or_skipped_cutoff: str | None = None
+        retry_history_cutoff: str | None = None
+        deleted_delivered_or_skipped = 0
+        deleted_retry_history_events = 0
+
+        if self._settings.webhook_event_retention_days > 0:
+            delivered_cutoff_dt = now - timedelta(days=self._settings.webhook_event_retention_days)
+            delivered_or_skipped_cutoff = delivered_cutoff_dt.isoformat().replace("+00:00", "Z")
+            deleted_delivered_or_skipped = self._db.execute_rowcount(
+                """
+                DELETE FROM webhook_events
+                WHERE status IN (?, ?)
+                  AND retry_parent_id IS NULL
+                  AND id NOT IN (
+                    SELECT retry_parent_id FROM webhook_events WHERE retry_parent_id IS NOT NULL
+                  )
+                  AND updated_at < ?
+                """,
+                (WEBHOOK_STATUS_DELIVERED, WEBHOOK_STATUS_SKIPPED, delivered_or_skipped_cutoff),
+            )
+
+        if self._settings.webhook_retry_history_retention_days > 0:
+            retry_cutoff_dt = now - timedelta(days=self._settings.webhook_retry_history_retention_days)
+            retry_history_cutoff = retry_cutoff_dt.isoformat().replace("+00:00", "Z")
+            rows = self._db.fetchall(
+                """
+                SELECT id, retry_parent_id, status, updated_at, dead_lettered_at
+                FROM webhook_events
+                WHERE callback_url IS NOT NULL
+                """
+            )
+            rows_by_id = {row["id"]: row for row in rows}
+            root_cache: dict[str, str] = {}
+
+            def resolve_root_id(event_id: str) -> str:
+                if event_id in root_cache:
+                    return root_cache[event_id]
+                row = rows_by_id[event_id]
+                parent_id = row.get("retry_parent_id")
+                if not parent_id or parent_id not in rows_by_id:
+                    root_cache[event_id] = event_id
+                else:
+                    root_cache[event_id] = resolve_root_id(parent_id)
+                return root_cache[event_id]
+
+            chains: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                chains.setdefault(resolve_root_id(row["id"]), []).append(row)
+
+            ids_to_delete: list[str] = []
+            for chain_rows in chains.values():
+                if not (
+                    any(row.get("retry_parent_id") for row in chain_rows)
+                    or any(row["status"] == WEBHOOK_STATUS_FAILED for row in chain_rows)
+                    or any(row.get("dead_lettered_at") for row in chain_rows)
+                ):
+                    continue
+                if any(row["status"] == WEBHOOK_STATUS_QUEUED for row in chain_rows):
+                    continue
+                latest_updated_at = max(parse_iso(row["updated_at"]) for row in chain_rows)
+                if latest_updated_at >= retry_cutoff_dt:
+                    continue
+                ids_to_delete.extend(row["id"] for row in chain_rows)
+
+            deleted_retry_history_events = self._delete_webhook_events(ids_to_delete)
+
+        result = WebhookPruneResult(
+            deleted_delivered_or_skipped=deleted_delivered_or_skipped,
+            deleted_retry_history_events=deleted_retry_history_events,
+            total_deleted=deleted_delivered_or_skipped + deleted_retry_history_events,
+            delivered_or_skipped_cutoff=delivered_or_skipped_cutoff,
+            retry_history_cutoff=retry_history_cutoff,
+        )
+        if emit_audit:
+            self._audit.log(
+                event_type="webhook.history.pruned",
+                resource_type="webhook_event",
+                resource_id=None,
+                actor=actor,
+                payload=result.model_dump(),
+            )
+        return result
+
     def redeliver_webhook_event(self, event_id: str) -> WebhookEventResponse:
         row = self._require_webhook_event(event_id)
         if row["status"] != WEBHOOK_STATUS_FAILED:
@@ -831,6 +1015,20 @@ class ClawPassService:
 
     def start_webhook_recovery_loop(self) -> None:
         self._webhooks.start_recovery_loop()
+
+    def _delete_webhook_events(self, event_ids: list[str]) -> int:
+        if not event_ids:
+            return 0
+        deleted = 0
+        unique_ids = list(dict.fromkeys(event_ids))
+        for start in range(0, len(unique_ids), 200):
+            batch = unique_ids[start : start + 200]
+            placeholders = ",".join("?" for _ in batch)
+            deleted += self._db.execute_rowcount(
+                f"DELETE FROM webhook_events WHERE id IN ({placeholders})",
+                tuple(batch),
+            )
+        return deleted
 
     def _require_webhook_event(self, event_id: str) -> dict[str, Any]:
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))

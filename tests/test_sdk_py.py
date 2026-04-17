@@ -22,6 +22,8 @@ class _FakeHttpClient:
         self.calls.append(("post", path, json))
         if path == "/v1/approval-requests":
             return _DummyResponse({"id": json["request_id"], "status": "PENDING"})
+        if path == "/v1/webhook-events/prune":
+            return _DummyResponse({"deleted_delivered_or_skipped": 1, "deleted_retry_history_events": 2, "total_deleted": 3})
         if path.endswith("/cancel"):
             return _DummyResponse({"id": path.split("/")[-2], "status": "CANCELLED", "decision": "CANCELLED"})
         if path.endswith("/redeliver"):
@@ -47,6 +49,26 @@ class _FakeHttpClient:
                     "health_state": "warning",
                     "alerts": ["failure rate high"],
                 }
+            )
+        if path == "/v1/webhook-endpoints/summary":
+            return _DummyResponse(
+                [
+                    {
+                        "callback_url": "https://example.com/webhooks",
+                        "total_events": 3,
+                        "queued_count": 1,
+                        "stalled_count": 0,
+                        "delivered_count": 1,
+                        "failed_count": 1,
+                        "dead_lettered_count": 1,
+                        "attempted_count": 2,
+                        "failure_rate": 0.5,
+                        "next_attempt_at": "2026-04-17T00:00:00Z",
+                        "last_event_at": "2026-04-17T00:00:00Z",
+                        "latest_error": "timeout",
+                        "health_state": "critical",
+                    }
+                ]
             )
         if path == "/v1/webhook-events":
             return _DummyResponse(
@@ -224,3 +246,30 @@ def test_python_sdk_get_webhook_summary_uses_summary_endpoint():
     assert response["dead_lettered_count"] == 0
     assert response["failure_rate"] == 0.5
     assert response["redelivery_count"] == 1
+
+
+def test_python_sdk_list_webhook_endpoint_summaries_uses_endpoint_summary():
+    client = ClawPassClient("http://localhost:8081")
+    fake_client = _FakeHttpClient()
+    client._client = fake_client
+    try:
+        response = client.list_webhook_endpoint_summaries(limit=15)
+    finally:
+        client.close()
+
+    assert fake_client.calls[0] == ("get", "/v1/webhook-endpoints/summary", {"limit": 15})
+    assert response[0]["callback_url"] == "https://example.com/webhooks"
+    assert response[0]["health_state"] == "critical"
+
+
+def test_python_sdk_prune_webhook_events_uses_prune_endpoint():
+    client = ClawPassClient("http://localhost:8081")
+    fake_client = _FakeHttpClient()
+    client._client = fake_client
+    try:
+        response = client.prune_webhook_events()
+    finally:
+        client.close()
+
+    assert fake_client.calls[0] == ("post", "/v1/webhook-events/prune", {})
+    assert response["total_deleted"] == 3

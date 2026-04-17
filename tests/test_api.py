@@ -41,6 +41,8 @@ def _settings(tmp_path: Path) -> Settings:
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,
+        webhook_event_retention_days=14,
+        webhook_retry_history_retention_days=30,
         webhook_secret=None,
     )
 
@@ -506,6 +508,163 @@ def test_webhook_summary_reports_dead_lettered_failures(monkeypatch, tmp_path: P
     payload = summary.json()
     assert payload["dead_lettered_count"] == 1
     assert any("dead-lettered" in alert for alert in payload["alerts"])
+
+
+def test_webhook_endpoint_summary_groups_events_by_callback_url(tmp_path: Path):
+    settings = _settings(tmp_path)
+    client = TestClient(create_app(settings))
+    db = Database(settings.db_path)
+    now = utc_now()
+    future_available_at = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    created_at = now.isoformat().replace("+00:00", "Z")
+    db.execute_many(
+        [
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-api-failed",
+                    "req-endpoint-api",
+                    "approval.pending",
+                    '{"request_id":"req-endpoint-api"}',
+                    "https://example.com/webhooks/a",
+                    "failed",
+                    "timeout",
+                    2,
+                    None,
+                    None,
+                    None,
+                    None,
+                    1,
+                    created_at,
+                    "Automatic retry budget exhausted after 1 queued retry.",
+                    created_at,
+                    created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-api-queued",
+                    "req-endpoint-api",
+                    "approval.pending",
+                    '{"request_id":"req-endpoint-api"}',
+                    "https://example.com/webhooks/a",
+                    "queued",
+                    None,
+                    0,
+                    None,
+                    None,
+                    future_available_at,
+                    "whevt-endpoint-api-failed",
+                    2,
+                    None,
+                    None,
+                    created_at,
+                    created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-endpoint-api-ok",
+                    "req-endpoint-api-ok",
+                    "approval.pending",
+                    '{"request_id":"req-endpoint-api-ok"}',
+                    "https://example.com/webhooks/b",
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    created_at,
+                    created_at,
+                ),
+            ),
+        ]
+    )
+
+    response = client.get("/v1/webhook-endpoints/summary", params={"limit": 10})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["callback_url"] == "https://example.com/webhooks/a"
+    assert payload[0]["health_state"] == "critical"
+    assert payload[0]["dead_lettered_count"] == 1
+    assert payload[0]["queued_count"] == 1
+    assert payload[0]["next_attempt_at"] == future_available_at
+    assert payload[0]["latest_error"] == "timeout"
+    assert payload[1]["callback_url"] == "https://example.com/webhooks/b"
+
+
+def test_prune_webhook_events_endpoint_removes_old_history(tmp_path: Path):
+    settings = _settings(tmp_path)
+    client = TestClient(create_app(settings))
+    db = Database(settings.db_path)
+    old_delivered_at = (utc_now() - timedelta(days=20)).isoformat().replace("+00:00", "Z")
+    db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+          dead_letter_reason, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-prune-api-old",
+            "req-prune-api-old",
+            "approval.pending",
+            '{"request_id":"req-prune-api-old"}',
+            "https://example.com/webhooks/prune",
+            "delivered",
+            None,
+            1,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            old_delivered_at,
+            old_delivered_at,
+        ),
+    )
+
+    pruned = client.post("/v1/webhook-events/prune", json={})
+    assert pruned.status_code == 200
+    payload = pruned.json()
+    assert payload["deleted_delivered_or_skipped"] == 1
+    assert payload["total_deleted"] == 1
+
+    remaining = client.get("/v1/webhook-events", params={"request_id": "req-prune-api-old"})
+    assert remaining.status_code == 200
+    assert remaining.json() == []
 
 
 def test_retry_now_endpoint_requeues_stalled_webhook(monkeypatch, tmp_path: Path):
