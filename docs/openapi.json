@@ -1,0 +1,1337 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LedgerClaw",
+    "description": "Dual-mode approval platform with first-class passkey onboarding.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/webauthn/register/start": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Webauthn Register Start",
+        "operationId": "webauthn_register_start_v1_webauthn_register_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAuthnRegisterStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthnRegisterStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webauthn/register/complete": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Webauthn Register Complete",
+        "operationId": "webauthn_register_complete_v1_webauthn_register_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAuthnRegisterCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthnRegisterCompleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-requests": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Create Approval Request",
+        "operationId": "create_approval_request_v1_approval_requests_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalRequestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "List Approval Requests",
+        "operationId": "list_approval_requests_v1_approval_requests_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalRequestResponse"
+                  },
+                  "title": "Response List Approval Requests V1 Approval Requests Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-requests/{request_id}": {
+      "get": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Get Approval Request",
+        "operationId": "get_approval_request_v1_approval_requests__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalRequestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-requests/{request_id}/cancel": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Cancel Approval Request",
+        "operationId": "cancel_approval_request_v1_approval_requests__request_id__cancel_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalRequestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-requests/{request_id}/decision/start": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Start Decision",
+        "operationId": "start_decision_v1_approval_requests__request_id__decision_start_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-requests/{request_id}/decision/complete": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Complete Decision",
+        "operationId": "complete_decision_v1_approval_requests__request_id__decision_complete_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionCompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionCompleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signers/ethereum/challenge": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Ethereum Signer Challenge",
+        "operationId": "ethereum_signer_challenge_v1_signers_ethereum_challenge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EthereumSignerChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EthereumSignerChallengeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signers/ethereum/verify": {
+      "post": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Ethereum Signer Verify",
+        "operationId": "ethereum_signer_verify_v1_signers_ethereum_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EthereumSignerVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EthereumSignerVerifyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approvers/{approver_id}/summary": {
+      "get": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Approver Summary",
+        "operationId": "approver_summary_v1_approvers__approver_id__summary_get",
+        "parameters": [
+          {
+            "name": "approver_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Approver Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproverSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhook-events": {
+      "get": {
+        "tags": [
+          "ledgerclaw"
+        ],
+        "summary": "Webhook Events",
+        "operationId": "webhook_events_v1_webhook_events_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEventResponse"
+                  },
+                  "title": "Response Webhook Events V1 Webhook Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Index",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApprovalRequestResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "action_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Ref"
+          },
+          "action_hash": {
+            "type": "string",
+            "title": "Action Hash"
+          },
+          "requester_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requester Id"
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "approver_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver Id"
+          },
+          "nonce": {
+            "type": "string",
+            "title": "Nonce"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "callback_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "action_type",
+          "action_ref",
+          "action_hash",
+          "requester_id",
+          "risk_level",
+          "metadata",
+          "status",
+          "decision",
+          "method",
+          "approver_id",
+          "nonce",
+          "created_at",
+          "expires_at",
+          "decided_at",
+          "callback_url"
+        ],
+        "title": "ApprovalRequestResponse"
+      },
+      "ApproverSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "passkey_count": {
+            "type": "integer",
+            "title": "Passkey Count"
+          },
+          "ledger_webauthn_count": {
+            "type": "integer",
+            "title": "Ledger Webauthn Count"
+          },
+          "ethereum_signer_count": {
+            "type": "integer",
+            "title": "Ethereum Signer Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "passkey_count",
+          "ledger_webauthn_count",
+          "ethereum_signer_count"
+        ],
+        "title": "ApproverSummary"
+      },
+      "CancelApprovalRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "CancelApprovalRequest"
+      },
+      "CreateApprovalRequest": {
+        "properties": {
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "action_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Ref"
+          },
+          "action_hash": {
+            "type": "string",
+            "title": "Action Hash"
+          },
+          "requester_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requester Id"
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level",
+            "default": "low"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "callback_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action_type",
+          "action_hash"
+        ],
+        "title": "CreateApprovalRequest"
+      },
+      "DecisionCompleteRequest": {
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "title": "Challenge Id"
+          },
+          "proof": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Proof"
+          }
+        },
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "proof"
+        ],
+        "title": "DecisionCompleteRequest"
+      },
+      "DecisionCompleteResponse": {
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/ApprovalRequestResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request"
+        ],
+        "title": "DecisionCompleteResponse"
+      },
+      "DecisionStartRequest": {
+        "properties": {
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "DENY"
+            ],
+            "title": "Decision"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "webauthn",
+              "ledger_webauthn",
+              "ethereum_signer"
+            ],
+            "title": "Method"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approver_id",
+          "decision",
+          "method"
+        ],
+        "title": "DecisionStartRequest"
+      },
+      "DecisionStartResponse": {
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "title": "Challenge Id"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "method",
+          "expires_at",
+          "payload"
+        ],
+        "title": "DecisionStartResponse"
+      },
+      "EthereumSignerChallengeRequest": {
+        "properties": {
+          "approver_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver Id"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "chain_id": {
+            "type": "integer",
+            "title": "Chain Id",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "address"
+        ],
+        "title": "EthereumSignerChallengeRequest"
+      },
+      "EthereumSignerChallengeResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "typed_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Typed Data"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "approver_id",
+          "typed_data",
+          "digest"
+        ],
+        "title": "EthereumSignerChallengeResponse"
+      },
+      "EthereumSignerVerifyRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "signature": {
+            "type": "string",
+            "title": "Signature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "signature"
+        ],
+        "title": "EthereumSignerVerifyRequest"
+      },
+      "EthereumSignerVerifyResponse": {
+        "properties": {
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "chain_id": {
+            "type": "integer",
+            "title": "Chain Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approver_id",
+          "address",
+          "chain_id"
+        ],
+        "title": "EthereumSignerVerifyResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WebAuthnRegisterCompleteRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "credential": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Credential"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "credential"
+        ],
+        "title": "WebAuthnRegisterCompleteRequest"
+      },
+      "WebAuthnRegisterCompleteResponse": {
+        "properties": {
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "credential_id": {
+            "type": "string",
+            "title": "Credential Id"
+          },
+          "is_ledger": {
+            "type": "boolean",
+            "title": "Is Ledger"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approver_id",
+          "credential_id",
+          "is_ledger"
+        ],
+        "title": "WebAuthnRegisterCompleteResponse"
+      },
+      "WebAuthnRegisterStartRequest": {
+        "properties": {
+          "approver_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver Id"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "is_ledger": {
+            "type": "boolean",
+            "title": "Is Ledger",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "WebAuthnRegisterStartRequest"
+      },
+      "WebAuthnRegisterStartResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "public_key_options": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Public Key Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "approver_id",
+          "public_key_options"
+        ],
+        "title": "WebAuthnRegisterStartResponse"
+      },
+      "WebhookEventResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "title": "Attempt Count"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "request_id",
+          "event_type",
+          "status",
+          "last_error",
+          "attempt_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "WebhookEventResponse"
+      }
+    }
+  }
+}

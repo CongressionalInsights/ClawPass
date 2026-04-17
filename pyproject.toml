@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledgerclaw"
+version = "0.1.0"
+description = "LedgerClaw approval platform with passkey and ledger-backed verification"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "LedgerClaw contributors" }]
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn>=0.34.0,<1.0.0",
+  "pydantic>=2.11.0,<3.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "webauthn>=2.4.0,<3.0.0",
+  "eth-account>=0.13.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9.0.0",
+]
+
+[project.scripts]
+ledgerclaw-server = "ledgerclaw_server.main:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ledgerclaw_server*", "ledgerclaw_sdk_py*"]
+
+[tool.setuptools.package-data]
+ledgerclaw_server = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

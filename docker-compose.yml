@@ -1,0 +1,18 @@
+services:
+  ledgerclaw:
+    build:
+      context: .
+    ports:
+      - "8081:8081"
+    environment:
+      LEDGERCLAW_HOST: 0.0.0.0
+      LEDGERCLAW_PORT: 8081
+      LEDGERCLAW_DB_PATH: /data/ledgerclaw.db
+      LEDGERCLAW_EXPECTED_ORIGIN: http://localhost:8081
+      LEDGERCLAW_RP_ID: localhost
+      LEDGERCLAW_RP_NAME: LedgerClaw
+    volumes:
+      - ledgerclaw-data:/data
+
+volumes:
+  ledgerclaw-data:

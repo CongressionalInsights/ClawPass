@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LedgerClaw</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <header class="topbar">
+      <div>
+        <h1>LedgerClaw</h1>
+        <p class="subtitle">Dual-mode approvals with first-class passkeys</p>
+      </div>
+      <div class="status" id="global-status">Ready</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Onboarding Wizard</h2>
+        <ol class="steps">
+          <li class="step done">1. Create passkey</li>
+          <li class="step">2. Add optional Ledger method</li>
+          <li class="step">3. Confirm recovery path</li>
+        </ol>
+
+        <div class="grid">
+          <label>
+            Work email
+            <input id="email" type="email" placeholder="you@org.com" autocomplete="email" />
+          </label>
+          <label>
+            Display name
+            <input id="display-name" type="text" placeholder="Operator name" autocomplete="name" />
+          </label>
+        </div>
+
+        <div class="device-hint" id="device-hint"></div>
+
+        <div class="actions">
+          <button id="btn-passkey" class="btn btn-primary">Create passkey now</button>
+          <button id="btn-passkey-cross" class="btn">Use another device</button>
+          <button id="btn-ledger-webauthn" class="btn">Add Ledger as security key</button>
+        </div>
+
+        <div class="actions">
+          <button id="btn-ledger-eth" class="btn">Add Ledger Ethereum signer</button>
+          <button id="btn-recovery" class="btn btn-ghost">I confirmed a backup path</button>
+        </div>
+
+        <p class="note">
+          Retry-safe onboarding: if a prompt fails or is dismissed, re-run the same button. LedgerClaw keeps your account context and issues a fresh challenge.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Approvals</h2>
+        <div class="grid">
+          <label>
+            Action type
+            <input id="action-type" type="text" value="outbound.send" />
+          </label>
+          <label>
+            Action hash
+            <input id="action-hash" type="text" value="sha256:demo-hash" />
+          </label>
+        </div>
+
+        <div class="grid">
+          <label>
+            Risk level
+            <select id="risk-level">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </label>
+          <label>
+            Callback URL (optional)
+            <input id="callback-url" type="url" placeholder="https://example.com/webhooks/ledgerclaw" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="btn-create-request" class="btn btn-primary">Create approval request</button>
+          <button id="btn-refresh" class="btn">Refresh requests</button>
+        </div>
+
+        <div id="requests" class="request-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Settings</h2>
+        <div class="summary" id="summary">No approver selected yet.</div>
+        <div class="actions">
+          <button id="btn-settings-passkey" class="btn btn-primary">Create passkey (one-click)</button>
+          <button id="btn-load-summary" class="btn">Refresh approver summary</button>
+        </div>
+      </section>
+    </main>
+
+    <section class="log-panel">
+      <h3>Activity</h3>
+      <pre id="log"></pre>
+    </section>
+
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>
