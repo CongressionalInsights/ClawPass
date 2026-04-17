@@ -1,29 +1,48 @@
 # clawpass-sdk (TypeScript)
 
+Install:
+
+```bash
+npm install clawpass-sdk
+```
+
+## Quickstart
+
 ```ts
 import { ClawPassClient } from "clawpass-sdk";
 
 const client = new ClawPassClient({ baseUrl: "http://localhost:8081" });
+
 const request = await client.createApprovalRequest({
-  request_id: "deploy-prod-2026-04-16",
+  request_id: "deploy-prod-2026-04-17",
   action_type: "outbound.send",
   action_hash: "sha256:...",
   risk_level: "high",
+  callback_url: "https://producer.example/webhooks/clawpass",
 });
 
-const pending = await client.listApprovalRequests("pending");
-const cancelled = await client.cancelApprovalRequest(request.id, "operator cancelled");
-const failed = await client.listWebhookEvents({ requestId: request.id, status: "failed", eventType: "approval.pending" });
-const retried = await client.redeliverWebhookEvent(failed[0].id);
-const summary = await client.getWebhookSummary();
-const endpointHealth = await client.listWebhookEndpointSummaries(10);
-if (endpointHealth[0] && !endpointHealth[0].muted_until) {
-  await client.muteWebhookEndpoint(endpointHealth[0].callback_url, { reason: "operator pause" });
-}
-const queued = await client.listWebhookEvents({ requestId: request.id, status: "queued" });
-if (queued[0]) await client.retryWebhookEventNow(queued[0].id);
-const pruneResult = await client.pruneWebhookEvents();
-const pruneHistory = await client.getWebhookPruneHistory(5);
-console.log(summary.health_state, summary.alerts, endpointHealth[0]?.health_state, pruneResult.total_deleted, pruneHistory[0]?.total_deleted);
-const pageTwo = await client.listWebhookEvents({ requestId: request.id, limit: 20, cursor: failed[0].id });
+const current = await client.getApprovalRequest(request.id);
+console.log(current.status);
 ```
+
+## Common methods
+
+- `createApprovalRequest(payload)`
+- `getApprovalRequest(requestId)`
+- `listApprovalRequests(status?)`
+- `cancelApprovalRequest(requestId, reason?)`
+- `listWebhookEvents(filters?)`
+- `getWebhookSummary()`
+- `listWebhookEndpointSummaries(limit?)`
+- `muteWebhookEndpoint(callbackUrl, options?)`
+- `unmuteWebhookEndpoint(callbackUrl)`
+- `pruneWebhookEvents()`
+- `getWebhookPruneHistory(limit?)`
+- `redeliverWebhookEvent(eventId)`
+- `retryWebhookEventNow(eventId)`
+
+## More guidance
+
+For producer integration patterns and webhook handling guidance, use:
+- [Integration Guide](../docs/integration-guide.md)
+- [Webhook Operations](../docs/webhook-operations.md)

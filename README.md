@@ -41,25 +41,17 @@ clawpass-server
 
 ## Core API
 
-- `POST /v1/webauthn/register/start`
-- `POST /v1/webauthn/register/complete`
+Most integrations use a small core of the API surface:
+
 - `POST /v1/approval-requests`
 - `GET /v1/approval-requests`
-- `POST /v1/approval-requests/{id}/cancel`
+- `GET /v1/approval-requests/{id}`
 - `POST /v1/approval-requests/{id}/decision/start`
 - `POST /v1/approval-requests/{id}/decision/complete`
-- `POST /v1/signers/ethereum/challenge`
-- `POST /v1/signers/ethereum/verify`
-- `GET /v1/approvers/{approver_id}/summary`
 - `GET /v1/webhook-events`
 - `GET /v1/webhook-summary`
-- `GET /v1/webhook-endpoints/summary`
-- `POST /v1/webhook-endpoints/mute`
-- `POST /v1/webhook-endpoints/unmute`
-- `POST /v1/webhook-events/prune`
-- `GET /v1/webhook-prune-history`
-- `POST /v1/webhook-events/{id}/redeliver`
-- `POST /v1/webhook-events/{id}/retry-now`
+
+Use the interactive API browser at `/docs` for the complete route list.
 
 ## Docs
 

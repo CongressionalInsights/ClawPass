@@ -5,6 +5,8 @@ Use FastAPI's generated OpenAPI document:
 - Runtime endpoint: `/openapi.json`
 - Interactive docs: `/docs`
 
+For contributor and agent workflow, treat [../CONTRIBUTING.md](../CONTRIBUTING.md) as the canonical source for validation and regeneration steps.
+
 To export locally from the repo virtualenv:
 
 ```bash
