@@ -21,26 +21,30 @@ class Settings:
     webhook_secret: str | None
 
 
+def _env(primary: str, legacy: str, default: str) -> str:
+    return os.getenv(primary) or os.getenv(legacy) or default
+
+
 def load_settings() -> Settings:
-    expected_origin = os.getenv("LEDGERCLAW_EXPECTED_ORIGIN", "http://localhost:8081")
-    expected_origins_raw = os.getenv("LEDGERCLAW_EXPECTED_ORIGINS", "")
+    expected_origin = _env("CLAWPASS_EXPECTED_ORIGIN", "LEDGERCLAW_EXPECTED_ORIGIN", "http://localhost:8081")
+    expected_origins_raw = _env("CLAWPASS_EXPECTED_ORIGINS", "LEDGERCLAW_EXPECTED_ORIGINS", "")
     expected_origins = [origin.strip() for origin in expected_origins_raw.split(",") if origin.strip()]
     if expected_origin not in expected_origins:
         expected_origins.append(expected_origin)
 
-    db_path = Path(os.getenv("LEDGERCLAW_DB_PATH", "ledgerclaw.db")).expanduser().resolve()
+    db_path = Path(_env("CLAWPASS_DB_PATH", "LEDGERCLAW_DB_PATH", "clawpass.db")).expanduser().resolve()
 
     return Settings(
         db_path=db_path,
-        host=os.getenv("LEDGERCLAW_HOST", "0.0.0.0"),
-        port=int(os.getenv("LEDGERCLAW_PORT", "8081")),
-        rp_id=os.getenv("LEDGERCLAW_RP_ID", "localhost"),
-        rp_name=os.getenv("LEDGERCLAW_RP_NAME", "LedgerClaw"),
+        host=_env("CLAWPASS_HOST", "LEDGERCLAW_HOST", "0.0.0.0"),
+        port=int(_env("CLAWPASS_PORT", "LEDGERCLAW_PORT", "8081")),
+        rp_id=_env("CLAWPASS_RP_ID", "LEDGERCLAW_RP_ID", "localhost"),
+        rp_name=_env("CLAWPASS_RP_NAME", "LEDGERCLAW_RP_NAME", "ClawPass"),
         expected_origin=expected_origin,
         expected_origins=expected_origins,
-        webauthn_timeout_ms=int(os.getenv("LEDGERCLAW_WEBAUTHN_TIMEOUT_MS", "60000")),
-        challenge_ttl_minutes=int(os.getenv("LEDGERCLAW_CHALLENGE_TTL_MINUTES", "10")),
-        approval_default_ttl_minutes=int(os.getenv("LEDGERCLAW_APPROVAL_DEFAULT_TTL_MINUTES", "60")),
-        webhook_timeout_seconds=float(os.getenv("LEDGERCLAW_WEBHOOK_TIMEOUT_SECONDS", "5")),
-        webhook_secret=os.getenv("LEDGERCLAW_WEBHOOK_SECRET") or None,
+        webauthn_timeout_ms=int(_env("CLAWPASS_WEBAUTHN_TIMEOUT_MS", "LEDGERCLAW_WEBAUTHN_TIMEOUT_MS", "60000")),
+        challenge_ttl_minutes=int(_env("CLAWPASS_CHALLENGE_TTL_MINUTES", "LEDGERCLAW_CHALLENGE_TTL_MINUTES", "10")),
+        approval_default_ttl_minutes=int(_env("CLAWPASS_APPROVAL_DEFAULT_TTL_MINUTES", "LEDGERCLAW_APPROVAL_DEFAULT_TTL_MINUTES", "60")),
+        webhook_timeout_seconds=float(_env("CLAWPASS_WEBHOOK_TIMEOUT_SECONDS", "LEDGERCLAW_WEBHOOK_TIMEOUT_SECONDS", "5")),
+        webhook_secret=os.getenv("CLAWPASS_WEBHOOK_SECRET") or os.getenv("LEDGERCLAW_WEBHOOK_SECRET") or None,
     )

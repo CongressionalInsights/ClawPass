@@ -126,6 +126,107 @@ def test_expired_request_transitions_and_emits_event(service):
     assert "approval.expired" in event_types
 
 
+def test_cancel_request_emits_cancelled_event(service):
+    request = service.create_approval_request(
+        CreateApprovalRequest(action_type="digest.publish", action_hash="sha256:cancel", risk_level="low")
+    )
+
+    cancelled = service.cancel_approval_request(request.id, reason="operator cancelled")
+    assert cancelled.status == "CANCELLED"
+    assert cancelled.decision == "CANCELLED"
+    assert cancelled.method == "system"
+
+    events = service.list_webhook_events(request.id)
+    event_types = {event.event_type for event in events}
+    assert "approval.pending" in event_types
+    assert "approval.cancelled" in event_types
+
+
+def test_duplicate_request_id_returns_conflict(service):
+    payload = CreateApprovalRequest(
+        request_id="req-fixed-id",
+        action_type="digest.publish",
+        action_hash="sha256:first",
+        risk_level="low",
+    )
+    service.create_approval_request(payload)
+
+    with pytest.raises(HTTPException) as exc:
+        service.create_approval_request(
+            CreateApprovalRequest(
+                request_id="req-fixed-id",
+                action_type="digest.publish",
+                action_hash="sha256:second",
+                risk_level="low",
+            )
+        )
+
+    assert exc.value.status_code == 409
+    assert "already exists" in str(exc.value.detail)
+
+
+def test_invalid_expires_at_returns_bad_request(service):
+    with pytest.raises(HTTPException) as exc:
+        service.create_approval_request(
+            CreateApprovalRequest(
+                action_type="digest.publish",
+                action_hash="sha256:bad-expiry",
+                risk_level="low",
+                expires_at="not-a-timestamp",
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert "valid ISO 8601" in str(exc.value.detail)
+
+
+def test_naive_expires_at_is_treated_as_utc(service):
+    future_naive = (utc_now() + timedelta(minutes=5)).replace(tzinfo=None).isoformat(timespec="seconds")
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:naive-expiry",
+            risk_level="low",
+            expires_at=future_naive,
+        )
+    )
+
+    assert request.status == "PENDING"
+    assert request.expires_at.endswith("Z")
+
+
+def test_list_approval_requests_status_filter_respects_expiration(service):
+    active = service.create_approval_request(
+        CreateApprovalRequest(action_type="digest.publish", action_hash="sha256:pending", risk_level="low")
+    )
+    expired = service.create_approval_request(
+        CreateApprovalRequest(action_type="digest.publish", action_hash="sha256:expired", risk_level="low")
+    )
+
+    expired_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    service._db.execute("UPDATE approval_requests SET expires_at = ? WHERE id = ?", (expired_at, expired.id))
+
+    pending_ids = {request.id for request in service.list_approval_requests(status="PENDING")}
+    assert active.id in pending_ids
+    assert expired.id not in pending_ids
+
+    expired_ids = {request.id for request in service.list_approval_requests(status="EXPIRED")}
+    assert expired.id in expired_ids
+    assert active.id not in expired_ids
+
+    lower_pending_ids = {request.id for request in service.list_approval_requests(status="pending")}
+    assert active.id in lower_pending_ids
+    assert expired.id not in lower_pending_ids
+
+
+def test_list_approval_requests_rejects_unknown_status(service):
+    with pytest.raises(HTTPException) as exc:
+        service.list_approval_requests(status="unknown")
+
+    assert exc.value.status_code == 400
+    assert "Unsupported status" in str(exc.value.detail)
+
+
 def test_ethereum_signer_enrollment_and_decision(service):
     account = Account.create()
     challenge = service.start_ethereum_signer_challenge(

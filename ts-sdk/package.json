@@ -1,7 +1,7 @@
 {
-  "name": "ledgerclaw-sdk",
+  "name": "clawpass-sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for LedgerClaw",
+  "description": "TypeScript SDK for ClawPass",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",

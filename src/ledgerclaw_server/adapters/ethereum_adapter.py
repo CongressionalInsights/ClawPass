@@ -47,7 +47,7 @@ class EthereumAdapter:
             },
             "primaryType": "SignerEnrollment",
             "domain": {
-                "name": "LedgerClaw",
+                "name": "ClawPass",
                 "version": "1",
                 "chainId": chain_id,
                 "verifyingContract": ZERO_ADDRESS,
@@ -91,7 +91,7 @@ class EthereumAdapter:
             },
             "primaryType": "ApprovalDecision",
             "domain": {
-                "name": "LedgerClaw",
+                "name": "ClawPass",
                 "version": "1",
                 "chainId": chain_id,
                 "verifyingContract": ZERO_ADDRESS,

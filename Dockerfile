@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir .
 
 EXPOSE 8081
-CMD ["ledgerclaw-server"]
+CMD ["clawpass-server"]

@@ -21,10 +21,10 @@
 - Method-specific cryptographic verification
 - Fail-closed policy on verification errors
 - Immutable audit records
-- Optional webhook HMAC signature (`X-LedgerClaw-Signature`)
+- Optional webhook HMAC signature (`X-ClawPass-Signature`)
 
 ## Residual risks
 
 - Wallet/browser extension compromise on approver endpoint
-- Weak org identity governance outside LedgerClaw
+- Weak org identity governance outside ClawPass
 - Social engineering around approval intent context

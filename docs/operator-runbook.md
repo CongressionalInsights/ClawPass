@@ -27,7 +27,7 @@ docker compose up --build
 
 ## Backup
 
-Persist `/data/ledgerclaw.db` on a regular schedule.
+Persist `/data/clawpass.db` on a regular schedule.
 
 ## Upgrade
 

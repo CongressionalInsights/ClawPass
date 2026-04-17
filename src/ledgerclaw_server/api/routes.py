@@ -25,7 +25,7 @@ from ledgerclaw_server.core.service import LedgerClawService
 
 
 def get_router(get_service: callable) -> APIRouter:
-    router = APIRouter(prefix="/v1", tags=["ledgerclaw"])
+    router = APIRouter(prefix="/v1", tags=["clawpass"])
 
     def service() -> LedgerClawService:
         return get_service()

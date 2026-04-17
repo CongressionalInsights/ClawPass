@@ -3,13 +3,13 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ledgerclaw"
+name = "clawpass"
 version = "0.1.0"
-description = "LedgerClaw approval platform with passkey and ledger-backed verification"
+description = "ClawPass approval platform with passkey and ledger-backed verification"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-authors = [{ name = "LedgerClaw contributors" }]
+authors = [{ name = "ClawPass contributors" }]
 dependencies = [
   "fastapi>=0.115.0,<1.0.0",
   "uvicorn>=0.34.0,<1.0.0",
@@ -25,6 +25,7 @@ dev = [
 ]
 
 [project.scripts]
+clawpass-server = "ledgerclaw_server.main:main"
 ledgerclaw-server = "ledgerclaw_server.main:main"
 
 [tool.setuptools]

@@ -1,6 +1,6 @@
-"""Reference Scotty adapter for LedgerClaw.
+"""Reference Scotty adapter for ClawPass.
 
-This adapter submits a sensitive Scotty action to LedgerClaw and checks final approval state
+This adapter submits a sensitive Scotty action to ClawPass and checks final approval state
 before executing the downstream side effect.
 """
 
@@ -11,7 +11,7 @@ import json
 import time
 from dataclasses import dataclass
 
-from ledgerclaw_sdk_py import LedgerClawClient
+from ledgerclaw_sdk_py import ClawPassClient
 
 
 @dataclass(slots=True)
@@ -26,9 +26,9 @@ def action_hash(payload: dict) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
-class ScottyLedgerClawAdapter:
-    def __init__(self, ledgerclaw_url: str) -> None:
-        self.client = LedgerClawClient(ledgerclaw_url)
+class ScottyClawPassAdapter:
+    def __init__(self, clawpass_url: str) -> None:
+        self.client = ClawPassClient(clawpass_url)
 
     def submit_for_approval(self, action: SensitiveAction, requester_id: str, callback_url: str | None = None) -> dict:
         return self.client.create_approval_request(

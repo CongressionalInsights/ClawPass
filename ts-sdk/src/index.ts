@@ -1,16 +1,30 @@
 export type DecisionMethod = "webauthn" | "ledger_webauthn" | "ethereum_signer";
 export type DecisionValue = "APPROVE" | "DENY";
 
-export interface LedgerClawClientOptions {
+export interface CreateApprovalRequestPayload {
+  request_id?: string;
+  action_type: string;
+  action_hash: string;
+  risk_level?: string;
+  requester_id?: string;
+  action_ref?: string;
+  metadata?: Record<string, unknown>;
+  expires_at?: string;
+  callback_url?: string;
+}
+
+export interface ClawPassClientOptions {
   baseUrl: string;
   headers?: Record<string, string>;
 }
 
-export class LedgerClawClient {
+export type LedgerClawClientOptions = ClawPassClientOptions;
+
+export class ClawPassClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
 
-  constructor(options: LedgerClawClientOptions) {
+  constructor(options: ClawPassClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.headers = options.headers || {};
   }
@@ -31,7 +45,7 @@ export class LedgerClawClient {
     return payload as T;
   }
 
-  createApprovalRequest(payload: Record<string, unknown>) {
+  createApprovalRequest(payload: CreateApprovalRequestPayload) {
     return this.request("/v1/approval-requests", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -56,3 +70,5 @@ export class LedgerClawClient {
     });
   }
 }
+
+export const LedgerClawClient = ClawPassClient;

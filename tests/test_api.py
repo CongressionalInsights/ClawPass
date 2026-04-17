@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -12,6 +13,8 @@ if str(SRC) not in sys.path:
 
 from ledgerclaw_server.app import create_app
 from ledgerclaw_server.core.config import Settings
+from ledgerclaw_server.core.database import Database
+from ledgerclaw_server.core.utils import utc_now
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -20,7 +23,7 @@ def _settings(tmp_path: Path) -> Settings:
         host="127.0.0.1",
         port=8081,
         rp_id="localhost",
-        rp_name="LedgerClaw",
+        rp_name="ClawPass",
         expected_origin="http://localhost:8081",
         expected_origins=["http://localhost:8081"],
         webauthn_timeout_ms=60000,
@@ -65,7 +68,7 @@ def test_api_flow_with_mocked_webauthn(monkeypatch, tmp_path: Path):
 
     root = client.get("/")
     assert root.status_code == 200
-    assert "LedgerClaw" in root.text
+    assert "ClawPass" in root.text
 
     start = client.post(
         "/v1/webauthn/register/start",
@@ -101,3 +104,136 @@ def test_api_flow_with_mocked_webauthn(monkeypatch, tmp_path: Path):
     )
     assert done.status_code == 200
     assert done.json()["request"]["status"] == "APPROVED"
+
+
+def test_list_approval_requests_status_filter_expires_stale_pending_items(tmp_path: Path):
+    settings = _settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    active = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:pending", "risk_level": "low"},
+    )
+    assert active.status_code == 200
+
+    expired = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:expired", "risk_level": "low"},
+    )
+    assert expired.status_code == 200
+    expired_id = expired.json()["id"]
+
+    expired_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    Database(settings.db_path).execute(
+        "UPDATE approval_requests SET expires_at = ? WHERE id = ?",
+        (expired_at, expired_id),
+    )
+
+    pending = client.get("/v1/approval-requests", params={"status": "PENDING"})
+    assert pending.status_code == 200
+    pending_ids = {request["id"] for request in pending.json()}
+    assert active.json()["id"] in pending_ids
+    assert expired_id not in pending_ids
+
+    expired_list = client.get("/v1/approval-requests", params={"status": "EXPIRED"})
+    assert expired_list.status_code == 200
+    expired_ids = {request["id"] for request in expired_list.json()}
+    assert expired_id in expired_ids
+    assert active.json()["id"] not in expired_ids
+
+
+def test_cancel_request_emits_cancelled_webhook_event(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    created = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:cancel", "risk_level": "low"},
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+
+    cancelled = client.post(
+        f"/v1/approval-requests/{request_id}/cancel",
+        json={"reason": "operator cancelled"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "CANCELLED"
+
+    events = client.get("/v1/webhook-events", params={"request_id": request_id})
+    assert events.status_code == 200
+    event_types = {event["event_type"] for event in events.json()}
+    assert "approval.pending" in event_types
+    assert "approval.cancelled" in event_types
+
+
+def test_duplicate_request_id_returns_conflict(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+    payload = {
+        "request_id": "req-fixed-id",
+        "action_type": "digest.publish",
+        "action_hash": "sha256:first",
+        "risk_level": "low",
+    }
+
+    created = client.post("/v1/approval-requests", json=payload)
+    assert created.status_code == 200
+
+    duplicate = client.post(
+        "/v1/approval-requests",
+        json={**payload, "action_hash": "sha256:second"},
+    )
+    assert duplicate.status_code == 409
+    assert "already exists" in duplicate.json()["detail"]
+
+
+def test_invalid_expires_at_returns_bad_request(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    response = client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:bad-expiry",
+            "risk_level": "low",
+            "expires_at": "not-a-timestamp",
+        },
+    )
+    assert response.status_code == 400
+    assert "valid ISO 8601" in response.json()["detail"]
+
+
+def test_naive_expires_at_is_treated_as_utc(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+    future_naive = (utc_now() + timedelta(minutes=5)).replace(tzinfo=None).isoformat(timespec="seconds")
+
+    response = client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:naive-expiry",
+            "risk_level": "low",
+            "expires_at": future_naive,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["expires_at"].endswith("Z")
+
+
+def test_list_approval_requests_status_filter_is_case_insensitive_and_validated(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    created = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:pending", "risk_level": "low"},
+    )
+    assert created.status_code == 200
+    created_id = created.json()["id"]
+
+    pending = client.get("/v1/approval-requests", params={"status": "pending"})
+    assert pending.status_code == 200
+    pending_ids = {request["id"] for request in pending.json()}
+    assert created_id in pending_ids
+
+    invalid = client.get("/v1/approval-requests", params={"status": "unknown"})
+    assert invalid.status_code == 400
+    assert "Unsupported status" in invalid.json()["detail"]

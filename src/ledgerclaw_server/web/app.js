@@ -184,7 +184,7 @@ async function createRequest() {
       risk_level: $("risk-level").value,
       requester_id: state.approverId || "demo-requester",
       callback_url: $("callback-url").value.trim() || undefined,
-      metadata: { source: "ledgerclaw-web-demo" },
+      metadata: { source: "clawpass-web-demo" },
     }),
   });
   log("Approval request created.", req);
