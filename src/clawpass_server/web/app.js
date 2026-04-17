@@ -1,6 +1,7 @@
 const state = {
   approverId: null,
   webhookFilter: "attention",
+  webhookEndpointFilter: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -208,6 +209,23 @@ function formatTimestampWithRelative(value) {
   return value ? `${value} (${formatRelativeTime(value)})` : "n/a";
 }
 
+function setWebhookEndpointFilter(callbackUrl) {
+  state.webhookEndpointFilter = callbackUrl || null;
+  const label = state.webhookEndpointFilter
+    ? `Endpoint filter: ${state.webhookEndpointFilter}`
+    : "Endpoint filter: all destinations";
+  $("webhook-endpoint-filter-state").textContent = label;
+  $("btn-clear-webhook-endpoint-filter").disabled = !state.webhookEndpointFilter;
+}
+
+function buildWebhookEventsPath(status, limit = 50) {
+  const params = new URLSearchParams({ status, limit: String(limit) });
+  if (state.webhookEndpointFilter) {
+    params.set("callback_url", state.webhookEndpointFilter);
+  }
+  return `/v1/webhook-events?${params.toString()}`;
+}
+
 async function refreshWebhookSummary() {
   const summary = await api("/v1/webhook-summary");
   $("webhook-health").textContent = `Health: ${summary.health_state}`;
@@ -332,6 +350,7 @@ function renderWebhookEventCard(event, chainStats) {
   card.innerHTML = `
     <strong>${event.id}</strong>
     <div class="request-meta">${event.event_type} · request=${event.request_id} · state=${stateLabel}</div>
+    ${event.callback_url ? `<div class="request-meta">endpoint=${event.callback_url}</div>` : ""}
     <div class="request-meta">${retryLabel} · attempts=${event.attempt_count} · ${scheduleLabel}</div>
     <div class="request-meta">${historyBits.join(" · ")}</div>
     ${event.retry_parent_id ? `<div class="request-meta">retry-parent=${event.retry_parent_id}</div>` : ""}
@@ -387,14 +406,56 @@ function renderWebhookEndpointCard(summary) {
   const card = document.createElement("div");
   card.className = "request-card";
   const nextAttempt = summary.next_attempt_at ? formatTimestampWithRelative(summary.next_attempt_at) : "none scheduled";
+  const muteLabel = summary.muted_until ? formatTimestampWithRelative(summary.muted_until) : "not muted";
   card.innerHTML = `
     <strong>${summary.callback_url}</strong>
     <div class="request-meta">state=${summary.health_state} · total=${summary.total_events} · delivered=${summary.delivered_count} · failed=${summary.failed_count}</div>
     <div class="request-meta">queued=${summary.queued_count} · stalled=${summary.stalled_count} · dead-lettered=${summary.dead_lettered_count} · failure-rate=${formatPercent(summary.failure_rate)}</div>
+    <div class="request-meta">muted=${muteLabel} · consecutive-failures=${summary.consecutive_failure_count}</div>
     <div class="request-meta">next-attempt=${nextAttempt}</div>
     <div class="request-meta">last-event=${summary.last_event_at || "n/a"}</div>
+    ${summary.mute_reason ? `<div class="request-meta">mute-reason=${summary.mute_reason}</div>` : ""}
     ${summary.latest_error ? `<div class="request-meta">latest-error=${summary.latest_error}</div>` : ""}
+    <div class="actions"></div>
   `;
+  const actions = card.querySelector(".actions");
+  const inspectButton = document.createElement("button");
+  inspectButton.className = "btn";
+  inspectButton.textContent = state.webhookEndpointFilter === summary.callback_url ? "Inspecting" : "Inspect events";
+  inspectButton.onclick = async () => {
+    setWebhookEndpointFilter(summary.callback_url);
+    await refreshWebhookAttentionEvents().catch(() => null);
+  };
+  actions.appendChild(inspectButton);
+
+  const muteButton = document.createElement("button");
+  muteButton.className = "btn";
+  const isMuted = Boolean(summary.muted_until);
+  muteButton.textContent = isMuted ? "Resume endpoint" : "Mute endpoint";
+  muteButton.onclick = async () => {
+    try {
+      if (isMuted) {
+        setStatus("Resuming webhook endpoint...");
+        await api("/v1/webhook-endpoints/unmute", {
+          method: "POST",
+          body: JSON.stringify({ callback_url: summary.callback_url }),
+        });
+      } else {
+        setStatus("Muting webhook endpoint...");
+        await api("/v1/webhook-endpoints/mute", {
+          method: "POST",
+          body: JSON.stringify({ callback_url: summary.callback_url }),
+        });
+      }
+      await refreshWebhookOps();
+      setStatus("Ready");
+    } catch (error) {
+      log("Webhook endpoint control failed", { callback_url: summary.callback_url, error: String(error) });
+      alert(String(error));
+      setStatus("Error");
+    }
+  };
+  actions.appendChild(muteButton);
   return card;
 }
 
@@ -412,10 +473,36 @@ async function refreshWebhookEndpointSummaries() {
   summaries.forEach((summary) => container.appendChild(renderWebhookEndpointCard(summary)));
 }
 
+function renderWebhookPruneHistoryCard(entry) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  card.innerHTML = `
+    <strong>Prune run at ${entry.created_at}</strong>
+    <div class="request-meta">actor=${entry.actor || "system"} · total-deleted=${entry.total_deleted}</div>
+    <div class="request-meta">delivered-or-skipped=${entry.deleted_delivered_or_skipped} · retry-history=${entry.deleted_retry_history_events}</div>
+    <div class="request-meta">cutoffs=${entry.delivered_or_skipped_cutoff || "n/a"} / ${entry.retry_history_cutoff || "n/a"}</div>
+  `;
+  return card;
+}
+
+async function refreshWebhookPruneHistory() {
+  const history = await api("/v1/webhook-prune-history?limit=10");
+  const container = $("webhook-prune-history");
+  container.innerHTML = "";
+  if (!history.length) {
+    const empty = document.createElement("div");
+    empty.className = "request-card";
+    empty.innerHTML = '<div class="request-meta">No prune history recorded yet.</div>';
+    container.appendChild(empty);
+    return;
+  }
+  history.forEach((entry) => container.appendChild(renderWebhookPruneHistoryCard(entry)));
+}
+
 async function refreshWebhookAttentionEvents() {
   const [queuedEvents, failedEvents] = await Promise.all([
-    api("/v1/webhook-events?status=queued&limit=50"),
-    api("/v1/webhook-events?status=failed&limit=50"),
+    api(buildWebhookEventsPath("queued")),
+    api(buildWebhookEventsPath("failed")),
   ]);
   const events = [...failedEvents, ...queuedEvents];
   const { chainStatsByRoot, rootByEventId } = buildWebhookChainStats(events);
@@ -455,7 +542,12 @@ async function refreshWebhookAttentionEvents() {
 }
 
 async function refreshWebhookOps() {
-  await Promise.all([refreshWebhookSummary(), refreshWebhookEndpointSummaries(), refreshWebhookAttentionEvents()]);
+  await Promise.all([
+    refreshWebhookSummary(),
+    refreshWebhookEndpointSummaries(),
+    refreshWebhookAttentionEvents(),
+    refreshWebhookPruneHistory(),
+  ]);
 }
 
 async function createRequest() {
@@ -672,6 +764,11 @@ function bindButtons() {
     }
   };
 
+  $("btn-clear-webhook-endpoint-filter").onclick = async () => {
+    setWebhookEndpointFilter(null);
+    await refreshWebhookAttentionEvents().catch(() => null);
+  };
+
   $("btn-webhook-filter-attention").onclick = async () => {
     setWebhookFilter("attention");
     await refreshWebhookAttentionEvents().catch(() => null);
@@ -692,6 +789,7 @@ async function init() {
   updateDeviceHint();
   bindButtons();
   setWebhookFilter("attention");
+  setWebhookEndpointFilter(null);
   await Promise.all([refreshRequests(), refreshWebhookOps()]).catch(() => null);
   setStatus("Ready");
 }

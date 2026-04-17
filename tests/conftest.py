@@ -77,6 +77,8 @@ def settings(tmp_path: Path) -> Settings:
         webhook_failure_rate_alert_threshold=0.25,
         webhook_event_retention_days=14,
         webhook_retry_history_retention_days=30,
+        webhook_endpoint_auto_mute_threshold=3,
+        webhook_endpoint_auto_mute_seconds=600,
         webhook_secret=None,
     )
 

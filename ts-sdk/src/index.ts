@@ -52,6 +52,7 @@ export interface WebhookEvent {
   id: string;
   request_id: string;
   event_type: string;
+  callback_url: string | null;
   status: string;
   last_error: string | null;
   attempt_count: number;
@@ -92,6 +93,9 @@ export interface WebhookDeliverySummary {
 
 export interface WebhookEndpointSummary {
   callback_url: string;
+  muted_until: string | null;
+  mute_reason: string | null;
+  consecutive_failure_count: number;
   total_events: number;
   queued_count: number;
   stalled_count: number;
@@ -114,10 +118,28 @@ export interface WebhookPruneResult {
   retry_history_cutoff: string | null;
 }
 
+export interface WebhookEndpointControl {
+  callback_url: string;
+  muted_until: string | null;
+  mute_reason: string | null;
+  consecutive_failure_count: number;
+}
+
+export interface WebhookPruneHistoryEntry {
+  created_at: string;
+  actor: string | null;
+  deleted_delivered_or_skipped: number;
+  deleted_retry_history_events: number;
+  total_deleted: number;
+  delivered_or_skipped_cutoff: string | null;
+  retry_history_cutoff: string | null;
+}
+
 export interface WebhookEventListFilters {
   requestId?: string;
   status?: WebhookEventStatus;
   eventType?: string;
+  callbackUrl?: string;
   limit?: number;
   cursor?: string;
 }
@@ -189,6 +211,9 @@ export class ClawPassClient {
     if (normalized.eventType) {
       params.set("event_type", normalized.eventType);
     }
+    if (normalized.callbackUrl) {
+      params.set("callback_url", normalized.callbackUrl);
+    }
     if (normalized.limit !== undefined) {
       params.set("limit", String(normalized.limit));
     }
@@ -209,11 +234,37 @@ export class ClawPassClient {
     return this.request<WebhookEndpointSummary[]>(`/v1/webhook-endpoints/summary${search}`);
   }
 
+  muteWebhookEndpoint(
+    callbackUrl: string,
+    options: { mutedForSeconds?: number; reason?: string } = {},
+  ) {
+    return this.request<WebhookEndpointControl>("/v1/webhook-endpoints/mute", {
+      method: "POST",
+      body: JSON.stringify({
+        callback_url: callbackUrl,
+        muted_for_seconds: options.mutedForSeconds,
+        reason: options.reason,
+      }),
+    });
+  }
+
+  unmuteWebhookEndpoint(callbackUrl: string) {
+    return this.request<WebhookEndpointControl>("/v1/webhook-endpoints/unmute", {
+      method: "POST",
+      body: JSON.stringify({ callback_url: callbackUrl }),
+    });
+  }
+
   pruneWebhookEvents() {
     return this.request<WebhookPruneResult>("/v1/webhook-events/prune", {
       method: "POST",
       body: JSON.stringify({}),
     });
+  }
+
+  getWebhookPruneHistory(limit?: number) {
+    const search = limit === undefined ? "" : `?${new URLSearchParams({ limit: String(limit) }).toString()}`;
+    return this.request<WebhookPruneHistoryEntry[]>(`/v1/webhook-prune-history${search}`);
   }
 
   redeliverWebhookEvent(eventId: string) {

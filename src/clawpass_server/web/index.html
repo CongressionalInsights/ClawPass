@@ -104,17 +104,20 @@
         <h2>Webhook Ops</h2>
         <div class="summary" id="webhook-health">Health: healthy</div>
         <div class="summary" id="webhook-summary-meta">No webhook activity yet.</div>
+        <div class="summary" id="webhook-endpoint-filter-state">Endpoint filter: all destinations</div>
         <div class="alert-list" id="webhook-alerts"></div>
         <div class="metrics-grid" id="webhook-stats"></div>
         <div class="actions">
           <button id="btn-refresh-webhooks" class="btn">Refresh webhook metrics</button>
           <button id="btn-prune-webhooks" class="btn">Prune old history</button>
+          <button id="btn-clear-webhook-endpoint-filter" class="btn">Clear endpoint filter</button>
           <button id="btn-webhook-filter-attention" class="btn">Attention</button>
           <button id="btn-webhook-filter-failed" class="btn">Failed</button>
           <button id="btn-webhook-filter-stalled" class="btn">Stalled</button>
         </div>
         <div id="webhook-endpoint-list" class="request-list"></div>
         <div id="webhook-event-list" class="request-list"></div>
+        <div id="webhook-prune-history" class="request-list"></div>
       </section>
     </main>
 

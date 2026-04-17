@@ -43,6 +43,8 @@ def _settings(tmp_path: Path) -> Settings:
         webhook_failure_rate_alert_threshold=0.25,
         webhook_event_retention_days=14,
         webhook_retry_history_retention_days=30,
+        webhook_endpoint_auto_mute_threshold=3,
+        webhook_endpoint_auto_mute_seconds=600,
         webhook_secret=None,
     )
 
@@ -665,6 +667,112 @@ def test_prune_webhook_events_endpoint_removes_old_history(tmp_path: Path):
     remaining = client.get("/v1/webhook-events", params={"request_id": "req-prune-api-old"})
     assert remaining.status_code == 200
     assert remaining.json() == []
+
+
+def test_webhook_endpoint_controls_filters_and_prune_history(monkeypatch, tmp_path: Path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
+    client = TestClient(create_app(settings))
+    db = Database(settings.db_path)
+    callback_url = "https://example.com/webhooks/operator"
+    due_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    old_delivered_at = (utc_now() - timedelta(days=20)).isoformat().replace("+00:00", "Z")
+    db.execute_many(
+        [
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-operator-queued",
+                    "req-operator-queued",
+                    "approval.pending",
+                    '{"request_id":"req-operator-queued"}',
+                    callback_url,
+                    "queued",
+                    None,
+                    0,
+                    None,
+                    None,
+                    due_at,
+                    None,
+                    0,
+                    None,
+                    None,
+                    created_at,
+                    created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-operator-old",
+                    "req-operator-old",
+                    "approval.pending",
+                    '{"request_id":"req-operator-old"}',
+                    callback_url,
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_delivered_at,
+                    old_delivered_at,
+                ),
+            ),
+        ]
+    )
+
+    muted = client.post(
+        "/v1/webhook-endpoints/mute",
+        json={"callback_url": callback_url, "muted_for_seconds": 300, "reason": "operator pause"},
+    )
+    assert muted.status_code == 200
+    muted_payload = muted.json()
+    assert muted_payload["callback_url"] == callback_url
+    assert muted_payload["mute_reason"] == "operator pause"
+    assert muted_payload["muted_until"] is not None
+
+    filtered = client.get("/v1/webhook-events", params={"callback_url": callback_url, "limit": 10})
+    assert filtered.status_code == 200
+    filtered_ids = {event["id"] for event in filtered.json()}
+    assert filtered_ids == {"whevt-operator-queued", "whevt-operator-old"}
+
+    summaries = client.get("/v1/webhook-endpoints/summary", params={"limit": 10})
+    assert summaries.status_code == 200
+    summary = next(item for item in summaries.json() if item["callback_url"] == callback_url)
+    assert summary["muted_until"] is not None
+    assert summary["consecutive_failure_count"] == 0
+
+    pruned = client.post("/v1/webhook-events/prune", json={})
+    assert pruned.status_code == 200
+    assert pruned.json()["total_deleted"] == 1
+
+    history = client.get("/v1/webhook-prune-history", params={"limit": 10})
+    assert history.status_code == 200
+    assert history.json()[0]["total_deleted"] == 1
+
+    unmuted = client.post("/v1/webhook-endpoints/unmute", json={"callback_url": callback_url})
+    assert unmuted.status_code == 200
+    assert unmuted.json()["muted_until"] is None
 
 
 def test_retry_now_endpoint_requeues_stalled_webhook(monkeypatch, tmp_path: Path):

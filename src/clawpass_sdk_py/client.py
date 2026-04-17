@@ -73,6 +73,7 @@ class ClawPassClient:
         request_id: str | None = None,
         status: str | None = None,
         event_type: str | None = None,
+        callback_url: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -82,6 +83,7 @@ class ClawPassClient:
                 "request_id": request_id,
                 "status": status,
                 "event_type": event_type,
+                "callback_url": callback_url,
                 "limit": limit,
                 "cursor": cursor,
             }.items()
@@ -102,8 +104,40 @@ class ClawPassClient:
         response.raise_for_status()
         return response.json()
 
+    def mute_webhook_endpoint(
+        self,
+        callback_url: str,
+        *,
+        muted_for_seconds: int | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            "/v1/webhook-endpoints/mute",
+            json={
+                "callback_url": callback_url,
+                "muted_for_seconds": muted_for_seconds,
+                "reason": reason,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def unmute_webhook_endpoint(self, callback_url: str) -> dict[str, Any]:
+        response = self._client.post(
+            "/v1/webhook-endpoints/unmute",
+            json={"callback_url": callback_url},
+        )
+        response.raise_for_status()
+        return response.json()
+
     def prune_webhook_events(self) -> dict[str, Any]:
         response = self._client.post("/v1/webhook-events/prune", json={})
+        response.raise_for_status()
+        return response.json()
+
+    def get_webhook_prune_history(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        params = {"limit": limit} if limit is not None else None
+        response = self._client.get("/v1/webhook-prune-history", params=params)
         response.raise_for_status()
         return response.json()
 

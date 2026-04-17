@@ -22,6 +22,24 @@ class _FakeHttpClient:
         self.calls.append(("post", path, json))
         if path == "/v1/approval-requests":
             return _DummyResponse({"id": json["request_id"], "status": "PENDING"})
+        if path == "/v1/webhook-endpoints/mute":
+            return _DummyResponse(
+                {
+                    "callback_url": json["callback_url"],
+                    "muted_until": "2026-04-17T00:10:00Z",
+                    "mute_reason": json.get("reason"),
+                    "consecutive_failure_count": 2,
+                }
+            )
+        if path == "/v1/webhook-endpoints/unmute":
+            return _DummyResponse(
+                {
+                    "callback_url": json["callback_url"],
+                    "muted_until": None,
+                    "mute_reason": None,
+                    "consecutive_failure_count": 2,
+                }
+            )
         if path == "/v1/webhook-events/prune":
             return _DummyResponse({"deleted_delivered_or_skipped": 1, "deleted_retry_history_events": 2, "total_deleted": 3})
         if path.endswith("/cancel"):
@@ -55,6 +73,9 @@ class _FakeHttpClient:
                 [
                     {
                         "callback_url": "https://example.com/webhooks",
+                        "muted_until": "2026-04-17T00:10:00Z",
+                        "mute_reason": "operator pause",
+                        "consecutive_failure_count": 2,
                         "total_events": 3,
                         "queued_count": 1,
                         "stalled_count": 0,
@@ -74,8 +95,10 @@ class _FakeHttpClient:
             return _DummyResponse(
                 [
                     {
+                        "id": "whevt-filtered",
                         "request_id": params["request_id"],
                         "event_type": params.get("event_type", "approval.cancelled"),
+                        "callback_url": params.get("callback_url"),
                         "status": params.get("status", "skipped"),
                         "available_at": None,
                         "lease_expires_at": None,
@@ -83,6 +106,20 @@ class _FakeHttpClient:
                         "retry_attempt": 0,
                         "dead_lettered_at": None,
                         "dead_letter_reason": None,
+                    }
+                ]
+            )
+        if path == "/v1/webhook-prune-history":
+            return _DummyResponse(
+                [
+                    {
+                        "created_at": "2026-04-17T00:00:00Z",
+                        "actor": "operator",
+                        "deleted_delivered_or_skipped": 1,
+                        "deleted_retry_history_events": 2,
+                        "total_deleted": 3,
+                        "delivered_or_skipped_cutoff": "2026-04-01T00:00:00Z",
+                        "retry_history_cutoff": "2026-03-01T00:00:00Z",
                     }
                 ]
             )
@@ -170,6 +207,7 @@ def test_python_sdk_list_webhook_events_forwards_request_filter():
             request_id="req-cancel",
             status="failed",
             event_type="approval.pending",
+            callback_url="https://example.com/webhooks",
             limit=25,
             cursor="whevt-cursor",
         )
@@ -183,14 +221,17 @@ def test_python_sdk_list_webhook_events_forwards_request_filter():
             "request_id": "req-cancel",
             "status": "failed",
             "event_type": "approval.pending",
+            "callback_url": "https://example.com/webhooks",
             "limit": 25,
             "cursor": "whevt-cursor",
         },
     )
     assert response == [
         {
+            "id": "whevt-filtered",
             "request_id": "req-cancel",
             "event_type": "approval.pending",
+            "callback_url": "https://example.com/webhooks",
             "status": "failed",
             "available_at": None,
             "lease_expires_at": None,
@@ -260,6 +301,7 @@ def test_python_sdk_list_webhook_endpoint_summaries_uses_endpoint_summary():
     assert fake_client.calls[0] == ("get", "/v1/webhook-endpoints/summary", {"limit": 15})
     assert response[0]["callback_url"] == "https://example.com/webhooks"
     assert response[0]["health_state"] == "critical"
+    assert response[0]["muted_until"] == "2026-04-17T00:10:00Z"
 
 
 def test_python_sdk_prune_webhook_events_uses_prune_endpoint():
@@ -273,3 +315,38 @@ def test_python_sdk_prune_webhook_events_uses_prune_endpoint():
 
     assert fake_client.calls[0] == ("post", "/v1/webhook-events/prune", {})
     assert response["total_deleted"] == 3
+
+
+def test_python_sdk_mute_unmute_and_prune_history_use_endpoint_ops():
+    client = ClawPassClient("http://localhost:8081")
+    fake_client = _FakeHttpClient()
+    client._client = fake_client
+    try:
+        muted = client.mute_webhook_endpoint(
+            "https://example.com/webhooks",
+            muted_for_seconds=300,
+            reason="operator pause",
+        )
+        unmuted = client.unmute_webhook_endpoint("https://example.com/webhooks")
+        history = client.get_webhook_prune_history(limit=5)
+    finally:
+        client.close()
+
+    assert fake_client.calls[0] == (
+        "post",
+        "/v1/webhook-endpoints/mute",
+        {
+            "callback_url": "https://example.com/webhooks",
+            "muted_for_seconds": 300,
+            "reason": "operator pause",
+        },
+    )
+    assert fake_client.calls[1] == (
+        "post",
+        "/v1/webhook-endpoints/unmute",
+        {"callback_url": "https://example.com/webhooks"},
+    )
+    assert fake_client.calls[2] == ("get", "/v1/webhook-prune-history", {"limit": 5})
+    assert muted["muted_until"] == "2026-04-17T00:10:00Z"
+    assert unmuted["muted_until"] is None
+    assert history[0]["total_deleted"] == 3

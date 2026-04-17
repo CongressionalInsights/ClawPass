@@ -118,6 +118,7 @@ class WebhookEventResponse(BaseModel):
     id: str
     request_id: str
     event_type: str
+    callback_url: str | None = None
     status: str
     last_error: str | None
     attempt_count: int
@@ -156,6 +157,9 @@ class WebhookDeliverySummary(BaseModel):
 
 class WebhookEndpointSummary(BaseModel):
     callback_url: str
+    muted_until: str | None
+    mute_reason: str | None
+    consecutive_failure_count: int
     total_events: int
     queued_count: int
     stalled_count: int
@@ -171,6 +175,33 @@ class WebhookEndpointSummary(BaseModel):
 
 
 class WebhookPruneResult(BaseModel):
+    deleted_delivered_or_skipped: int
+    deleted_retry_history_events: int
+    total_deleted: int
+    delivered_or_skipped_cutoff: str | None
+    retry_history_cutoff: str | None
+
+
+class WebhookEndpointMuteRequest(BaseModel):
+    callback_url: str
+    muted_for_seconds: int | None = None
+    reason: str | None = None
+
+
+class WebhookEndpointUnmuteRequest(BaseModel):
+    callback_url: str
+
+
+class WebhookEndpointControlResponse(BaseModel):
+    callback_url: str
+    muted_until: str | None
+    mute_reason: str | None
+    consecutive_failure_count: int
+
+
+class WebhookPruneHistoryEntry(BaseModel):
+    created_at: str
+    actor: str | None
     deleted_delivered_or_skipped: int
     deleted_retry_history_events: int
     total_deleted: int

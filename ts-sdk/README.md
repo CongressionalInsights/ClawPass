@@ -17,9 +17,13 @@ const failed = await client.listWebhookEvents({ requestId: request.id, status: "
 const retried = await client.redeliverWebhookEvent(failed[0].id);
 const summary = await client.getWebhookSummary();
 const endpointHealth = await client.listWebhookEndpointSummaries(10);
+if (endpointHealth[0] && !endpointHealth[0].muted_until) {
+  await client.muteWebhookEndpoint(endpointHealth[0].callback_url, { reason: "operator pause" });
+}
 const queued = await client.listWebhookEvents({ requestId: request.id, status: "queued" });
 if (queued[0]) await client.retryWebhookEventNow(queued[0].id);
 const pruneResult = await client.pruneWebhookEvents();
-console.log(summary.health_state, summary.alerts, endpointHealth[0]?.health_state, pruneResult.total_deleted);
+const pruneHistory = await client.getWebhookPruneHistory(5);
+console.log(summary.health_state, summary.alerts, endpointHealth[0]?.health_state, pruneResult.total_deleted, pruneHistory[0]?.total_deleted);
 const pageTwo = await client.listWebhookEvents({ requestId: request.id, limit: 20, cursor: failed[0].id });
 ```
