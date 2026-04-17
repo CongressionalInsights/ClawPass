@@ -48,6 +48,31 @@ class ClawPassClient:
         response.raise_for_status()
         return response.json()
 
+    def list_approval_requests(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        params = {"status": status} if status is not None else None
+        response = self._client.get("/v1/approval-requests", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def cancel_approval_request(self, request_id: str, *, reason: str | None = None) -> dict[str, Any]:
+        response = self._client.post(
+            f"/v1/approval-requests/{request_id}/cancel",
+            json={"reason": reason},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_approver_summary(self, approver_id: str) -> dict[str, Any]:
+        response = self._client.get(f"/v1/approvers/{approver_id}/summary")
+        response.raise_for_status()
+        return response.json()
+
+    def list_webhook_events(self, *, request_id: str | None = None) -> list[dict[str, Any]]:
+        params = {"request_id": request_id} if request_id is not None else None
+        response = self._client.get("/v1/webhook-events", params=params)
+        response.raise_for_status()
+        return response.json()
+
     def start_webauthn_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._client.post("/v1/webauthn/register/start", json=payload)
         response.raise_for_status()

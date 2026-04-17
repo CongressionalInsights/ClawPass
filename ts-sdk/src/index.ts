@@ -1,5 +1,7 @@
 export type DecisionMethod = "webauthn" | "ledger_webauthn" | "ethereum_signer";
 export type DecisionValue = "APPROVE" | "DENY";
+export type ApprovalRequestStatus = "PENDING" | "APPROVED" | "DENIED" | "EXPIRED" | "CANCELLED";
+export type ApprovalRequestStatusQuery = ApprovalRequestStatus | Lowercase<ApprovalRequestStatus>;
 
 export interface CreateApprovalRequestPayload {
   request_id?: string;
@@ -16,6 +18,45 @@ export interface CreateApprovalRequestPayload {
 export interface ClawPassClientOptions {
   baseUrl: string;
   headers?: Record<string, string>;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  action_type: string;
+  action_ref: string | null;
+  action_hash: string;
+  requester_id: string | null;
+  risk_level: string;
+  metadata: Record<string, unknown>;
+  status: ApprovalRequestStatus;
+  decision: string | null;
+  method: string | null;
+  approver_id: string | null;
+  nonce: string;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  callback_url: string | null;
+}
+
+export interface ApproverSummary {
+  id: string;
+  email: string;
+  display_name: string | null;
+  passkey_count: number;
+  ledger_webauthn_count: number;
+  ethereum_signer_count: number;
+}
+
+export interface WebhookEvent {
+  id: string;
+  request_id: string;
+  event_type: string;
+  status: string;
+  last_error: string | null;
+  attempt_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export class ClawPassClient {
@@ -44,14 +85,35 @@ export class ClawPassClient {
   }
 
   createApprovalRequest(payload: CreateApprovalRequestPayload) {
-    return this.request("/v1/approval-requests", {
+    return this.request<ApprovalRequest>("/v1/approval-requests", {
       method: "POST",
       body: JSON.stringify(payload),
     });
   }
 
   getApprovalRequest(requestId: string) {
-    return this.request(`/v1/approval-requests/${requestId}`);
+    return this.request<ApprovalRequest>(`/v1/approval-requests/${requestId}`);
+  }
+
+  listApprovalRequests(status?: ApprovalRequestStatusQuery) {
+    const search = status ? `?${new URLSearchParams({ status }).toString()}` : "";
+    return this.request<ApprovalRequest[]>(`/v1/approval-requests${search}`);
+  }
+
+  cancelApprovalRequest(requestId: string, reason?: string) {
+    return this.request<ApprovalRequest>(`/v1/approval-requests/${requestId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  getApproverSummary(approverId: string) {
+    return this.request<ApproverSummary>(`/v1/approvers/${approverId}/summary`);
+  }
+
+  listWebhookEvents(requestId?: string) {
+    const search = requestId ? `?${new URLSearchParams({ request_id: requestId }).toString()}` : "";
+    return this.request<WebhookEvent[]>(`/v1/webhook-events${search}`);
   }
 
   startDecision(requestId: string, approverId: string, decision: DecisionValue, method: DecisionMethod) {

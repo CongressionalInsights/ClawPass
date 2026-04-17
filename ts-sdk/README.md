@@ -10,4 +10,8 @@ const request = await client.createApprovalRequest({
   action_hash: "sha256:...",
   risk_level: "high",
 });
+
+const pending = await client.listApprovalRequests("pending");
+const cancelled = await client.cancelApprovalRequest(request.id, "operator cancelled");
+const events = await client.listWebhookEvents(request.id);
 ```
