@@ -102,6 +102,9 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   attempt_count INTEGER NOT NULL DEFAULT 0,
   lease_owner TEXT,
   lease_expires_at TEXT,
+  available_at TEXT,
+  retry_parent_id TEXT,
+  retry_attempt INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -122,8 +125,8 @@ ON approval_requests(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_decision_challenges_request
 ON decision_challenges(request_id, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_webhook_events_status_lease_created
-ON webhook_events(status, lease_expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_status_available_lease_created
+ON webhook_events(status, available_at, lease_expires_at, created_at);
 """
 
 
@@ -149,8 +152,14 @@ class Database:
             connection.execute("ALTER TABLE webhook_events ADD COLUMN lease_owner TEXT")
         if "lease_expires_at" not in columns:
             connection.execute("ALTER TABLE webhook_events ADD COLUMN lease_expires_at TEXT")
+        if "available_at" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN available_at TEXT")
+        if "retry_parent_id" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN retry_parent_id TEXT")
+        if "retry_attempt" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN retry_attempt INTEGER NOT NULL DEFAULT 0")
         connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_lease_created ON webhook_events(status, lease_expires_at, created_at)"
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_available_lease_created ON webhook_events(status, available_at, lease_expires_at, created_at)"
         )
 
     def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:

@@ -160,6 +160,11 @@ select {
   background: #183241;
 }
 
+.btn.active {
+  border-color: #1dbfae;
+  background: #113943;
+}
+
 .btn-primary {
   border-color: #1dbfae;
   background: #0f3a3b;

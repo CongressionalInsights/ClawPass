@@ -40,6 +40,9 @@ def _settings(db_path: Path) -> Settings:
         instance_id="sdk-roundtrip",
         webhook_timeout_seconds=1,
         webhook_delivery_lease_seconds=30,
+        webhook_retry_poll_seconds=0,
+        webhook_auto_retry_limit=2,
+        webhook_auto_retry_base_delay_seconds=30,
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,
@@ -85,6 +88,7 @@ def main() -> int:
             if (
                 summary["backlog_count"] != 0
                 or summary["stalled_backlog_count"] != 0
+                or summary["scheduled_retry_count"] != 0
                 or summary["redelivery_count"] != 0
                 or summary["health_state"] != "healthy"
                 or summary["alerts"]

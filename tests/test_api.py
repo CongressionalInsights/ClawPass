@@ -33,6 +33,9 @@ def _settings(tmp_path: Path) -> Settings:
         instance_id="api-test-instance",
         webhook_timeout_seconds=1,
         webhook_delivery_lease_seconds=30,
+        webhook_retry_poll_seconds=0,
+        webhook_auto_retry_limit=2,
+        webhook_auto_retry_base_delay_seconds=30,
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,
@@ -437,6 +440,7 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert payload["backlog_count"] == 0
     assert payload["leased_backlog_count"] == 0
     assert payload["stalled_backlog_count"] == 0
+    assert payload["scheduled_retry_count"] == 0
     assert payload["delivered_count"] == 1
     assert payload["failed_count"] == 1
     assert payload["attempted_count"] == 2
@@ -449,3 +453,64 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert payload["health_state"] == "warning"
     assert len(payload["alerts"]) == 1
     assert "failure rate" in payload["alerts"][0]
+
+
+def test_retry_now_endpoint_requeues_stalled_webhook(monkeypatch, tmp_path: Path):
+    settings = _settings(tmp_path)
+    db = Database(settings.db_path)
+    db.ensure_ready()
+    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    available_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-stalled-api",
+            "req-stalled-api",
+            "approval.pending",
+            '{"request_id":"req-stalled-api"}',
+            "https://example.com/webhooks",
+            "queued",
+            None,
+            0,
+            None,
+            None,
+            available_at,
+            None,
+            0,
+            created_at,
+            created_at,
+        ),
+    )
+
+    class RecordingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
+
+    client = TestClient(create_app(settings))
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
+    retried = client.post("/v1/webhook-events/whevt-stalled-api/retry-now")
+    assert retried.status_code == 200
+    assert retried.json()["id"] == "whevt-stalled-api"
+    assert retried.json()["status"] == "queued"
+
+    delivered = client.get("/v1/webhook-events", params={"request_id": "req-stalled-api"})
+    assert delivered.status_code == 200
+    assert delivered.json()[0]["status"] == "delivered"

@@ -652,16 +652,26 @@ class ClawPassService:
             row["status"]: int(row["count"])
             for row in self._db.fetchall("SELECT status, COUNT(*) AS count FROM webhook_events GROUP BY status")
         }
-        queued_rows = self._db.fetchall("SELECT created_at, lease_expires_at FROM webhook_events WHERE status = ?", (WEBHOOK_STATUS_QUEUED,))
-        backlog_count = len(queued_rows)
+        queued_rows = self._db.fetchall(
+            "SELECT created_at, lease_expires_at, available_at, retry_parent_id FROM webhook_events WHERE status = ?",
+            (WEBHOOK_STATUS_QUEUED,),
+        )
+        backlog_count = 0
         leased_backlog_count = 0
         stalled_backlog_count = 0
+        scheduled_retry_count = 0
         oldest_queued_at: str | None = None
         oldest_stalled_at: str | None = None
         for row in queued_rows:
             created_at = row["created_at"]
             if oldest_queued_at is None or created_at < oldest_queued_at:
                 oldest_queued_at = created_at
+            available_at = row.get("available_at")
+            if available_at and parse_iso(available_at) > now:
+                if row.get("retry_parent_id"):
+                    scheduled_retry_count += 1
+                continue
+            backlog_count += 1
             lease_expires_at = row.get("lease_expires_at")
             if lease_expires_at and parse_iso(lease_expires_at) > now:
                 leased_backlog_count += 1
@@ -676,32 +686,22 @@ class ClawPassService:
         attempted_count = delivered_count + failed_count
         failure_rate = failed_count / attempted_count if attempted_count else 0.0
 
-        redelivery_ids: list[str] = []
-        redelivery_rows = self._db.fetchall(
-            "SELECT payload_json FROM audit_events WHERE event_type = ? ORDER BY created_at DESC",
-            ("webhook.event.redelivered",),
-        )
-        for row in redelivery_rows:
-            payload = json.loads(row["payload_json"])
-            redelivery_event_id = payload.get("redelivery_event_id")
-            if redelivery_event_id:
-                redelivery_ids.append(redelivery_event_id)
-
         redelivery_counts = {
             WEBHOOK_STATUS_QUEUED: 0,
             WEBHOOK_STATUS_DELIVERED: 0,
             WEBHOOK_STATUS_FAILED: 0,
         }
-        if redelivery_ids:
-            placeholders = ",".join("?" for _ in redelivery_ids)
-            rows = self._db.fetchall(
-                f"SELECT status FROM webhook_events WHERE id IN ({placeholders})",
-                tuple(redelivery_ids),
-            )
-            for row in rows:
-                status = row["status"]
-                if status in redelivery_counts:
-                    redelivery_counts[status] += 1
+        redelivery_count = 0
+        retry_rows = self._db.fetchall(
+            "SELECT status, available_at FROM webhook_events WHERE retry_parent_id IS NOT NULL ORDER BY created_at DESC"
+        )
+        for row in retry_rows:
+            redelivery_count += 1
+            status = row["status"]
+            if status in redelivery_counts:
+                if status == WEBHOOK_STATUS_QUEUED and row.get("available_at") and parse_iso(row["available_at"]) > now:
+                    continue
+                redelivery_counts[status] += 1
 
         last_event_at = self._db.fetchone("SELECT MAX(created_at) AS value FROM webhook_events")["value"]
         alerts: list[str] = []
@@ -727,12 +727,13 @@ class ClawPassService:
             backlog_count=backlog_count,
             leased_backlog_count=leased_backlog_count,
             stalled_backlog_count=stalled_backlog_count,
+            scheduled_retry_count=scheduled_retry_count,
             delivered_count=delivered_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
             attempted_count=attempted_count,
             failure_rate=failure_rate,
-            redelivery_count=len(redelivery_ids),
+            redelivery_count=redelivery_count,
             redelivery_backlog_count=redelivery_counts[WEBHOOK_STATUS_QUEUED],
             redelivery_delivered_count=redelivery_counts[WEBHOOK_STATUS_DELIVERED],
             redelivery_failed_count=redelivery_counts[WEBHOOK_STATUS_FAILED],
@@ -749,12 +750,39 @@ class ClawPassService:
             raise HTTPException(status_code=400, detail="Only failed webhook events can be redelivered.")
         if not row.get("callback_url"):
             raise HTTPException(status_code=400, detail="Webhook event has no callback URL to redeliver.")
-        redelivered = self._webhooks.dispatch(
-            request_id=row["request_id"],
-            event_type=row["event_type"],
-            payload=json.loads(row["payload_json"]),
-            callback_url=row["callback_url"],
+        redelivery_row = self._db.fetchone(
+            """
+            SELECT * FROM webhook_events
+            WHERE retry_parent_id = ? AND status = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (row["id"], WEBHOOK_STATUS_QUEUED),
         )
+        if redelivery_row:
+            lease_expires_at = redelivery_row.get("lease_expires_at")
+            if not lease_expires_at or parse_iso(lease_expires_at) <= utc_now():
+                self._db.execute(
+                    """
+                    UPDATE webhook_events
+                    SET available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (utc_now_iso(), utc_now_iso(), redelivery_row["id"]),
+                )
+                redelivered = WebhookEventResponse(**self._require_webhook_event(redelivery_row["id"]))
+                self._webhooks.schedule_existing_event(redelivery_row["id"])
+            else:
+                redelivered = WebhookEventResponse(**self._require_webhook_event(redelivery_row["id"]))
+        else:
+            redelivered = self._webhooks.dispatch(
+                request_id=row["request_id"],
+                event_type=row["event_type"],
+                payload=json.loads(row["payload_json"]),
+                callback_url=row["callback_url"],
+                retry_parent_id=row["id"],
+                retry_attempt=int(row.get("retry_attempt") or 0) + 1,
+            )
         self._audit.log(
             event_type="webhook.event.redelivered",
             resource_type="webhook_event",
@@ -764,8 +792,39 @@ class ClawPassService:
         )
         return redelivered
 
+    def retry_webhook_event_now(self, event_id: str) -> WebhookEventResponse:
+        row = self._require_webhook_event(event_id)
+        if row["status"] != WEBHOOK_STATUS_QUEUED:
+            raise HTTPException(status_code=400, detail="Only queued webhook events can be retried immediately.")
+        if not row.get("callback_url"):
+            raise HTTPException(status_code=400, detail="Webhook event has no callback URL to retry.")
+        lease_expires_at = row.get("lease_expires_at")
+        if lease_expires_at and parse_iso(lease_expires_at) > utc_now():
+            raise HTTPException(status_code=409, detail="Webhook event is currently leased by an active delivery worker.")
+        self._db.execute(
+            """
+            UPDATE webhook_events
+            SET available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (utc_now_iso(), utc_now_iso(), event_id),
+        )
+        self._audit.log(
+            event_type="webhook.event.retry_now",
+            resource_type="webhook_event",
+            resource_id=event_id,
+            actor="system",
+            payload={"request_id": row["request_id"]},
+        )
+        retried = WebhookEventResponse(**self._require_webhook_event(event_id))
+        self._webhooks.schedule_existing_event(event_id)
+        return retried
+
     def recover_queued_webhook_events(self) -> int:
         return self._webhooks.recover_queued_events()
+
+    def start_webhook_recovery_loop(self) -> None:
+        self._webhooks.start_recovery_loop()
 
     def _require_webhook_event(self, event_id: str) -> dict[str, Any]:
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))

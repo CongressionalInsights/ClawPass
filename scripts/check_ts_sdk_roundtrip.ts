@@ -82,6 +82,7 @@ async function main(): Promise<void> {
       CLAWPASS_EXPECTED_ORIGIN: baseUrl,
       CLAWPASS_EXPECTED_ORIGINS: baseUrl,
       CLAWPASS_WEBHOOK_TIMEOUT_SECONDS: "0.1",
+      CLAWPASS_WEBHOOK_RETRY_POLL_SECONDS: "0",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
     if (
       summary.backlog_count !== 0 ||
       summary.stalled_backlog_count !== 0 ||
+      summary.scheduled_retry_count !== 0 ||
       summary.redelivery_count !== 0 ||
       summary.health_state !== "healthy" ||
       summary.alerts.length !== 0

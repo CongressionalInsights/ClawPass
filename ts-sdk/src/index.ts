@@ -55,6 +55,10 @@ export interface WebhookEvent {
   status: string;
   last_error: string | null;
   attempt_count: number;
+  available_at: string | null;
+  lease_expires_at: string | null;
+  retry_parent_id: string | null;
+  retry_attempt: number;
   created_at: string;
   updated_at: string;
 }
@@ -66,6 +70,7 @@ export interface WebhookDeliverySummary {
   backlog_count: number;
   leased_backlog_count: number;
   stalled_backlog_count: number;
+  scheduled_retry_count: number;
   delivered_count: number;
   failed_count: number;
   skipped_count: number;
@@ -174,6 +179,13 @@ export class ClawPassClient {
 
   redeliverWebhookEvent(eventId: string) {
     return this.request<WebhookEvent>(`/v1/webhook-events/${eventId}/redeliver`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  retryWebhookEventNow(eventId: string) {
+    return this.request<WebhookEvent>(`/v1/webhook-events/${eventId}/retry-now`, {
       method: "POST",
       body: JSON.stringify({}),
     });

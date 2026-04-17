@@ -101,6 +101,11 @@ class ClawPassClient:
         response.raise_for_status()
         return response.json()
 
+    def retry_webhook_event_now(self, event_id: str) -> dict[str, Any]:
+        response = self._client.post(f"/v1/webhook-events/{event_id}/retry-now", json={})
+        response.raise_for_status()
+        return response.json()
+
     def start_webauthn_registration(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._client.post("/v1/webauthn/register/start", json=payload)
         response.raise_for_status()
