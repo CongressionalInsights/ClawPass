@@ -18,8 +18,6 @@ export interface ClawPassClientOptions {
   headers?: Record<string, string>;
 }
 
-export type LedgerClawClientOptions = ClawPassClientOptions;
-
 export class ClawPassClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
@@ -70,5 +68,3 @@ export class ClawPassClient {
     });
   }
 }
-
-export const LedgerClawClient = ClawPassClient;
