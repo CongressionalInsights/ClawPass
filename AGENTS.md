@@ -2,34 +2,13 @@
 
 This file is for coding agents working inside the ClawPass repo.
 
-## Goals
+For shared contributor workflow, setup, validation commands, and the repo map, use [CONTRIBUTING.md](./CONTRIBUTING.md) as the canonical source.
+
+## Agent goals
 
 Keep changes small, contract-first, and fully synchronized across runtime behavior, SDKs, tests, and docs.
 
-## Setup
-
-Use the repo-local virtualenv:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-```
-
-Do not assume system Python has the required dependencies.
-
-## Repo map
-
-- `src/clawpass_server/core/`: product contracts, persistence, webhook behavior
-- `src/clawpass_server/api/`: route layer
-- `src/clawpass_server/web/`: built-in browser UI and operator dashboard
-- `src/clawpass_sdk_py/`: Python SDK
-- `ts-sdk/`: TypeScript SDK
-- `tests/`: regression coverage
-- `docs/`: human-facing docs
-- `autoresearch/` and `scripts/repo_autoresearch_eval.py`: bounded improvement harness
-
-## Source of truth
+## Agent source of truth
 
 When documenting or changing behavior, prefer these files in order:
 1. `src/clawpass_server/core/service.py`
@@ -39,7 +18,7 @@ When documenting or changing behavior, prefer these files in order:
 5. SDK surfaces
 6. docs
 
-Do not document features that are not implemented in those surfaces.
+Do not document or implement features that are not present in those surfaces.
 
 ## Current product constraints
 
@@ -63,56 +42,20 @@ If you change webhook behavior, also update:
 - `docs/webhook-operations.md`
 - dashboard behavior in `src/clawpass_server/web/`
 
-## Validation
+## Validation rule
 
-Minimum meaningful validation for runtime changes:
+Use the repo-local `.venv`, and treat [CONTRIBUTING.md](./CONTRIBUTING.md) as the canonical source for the full validation command set.
 
-```bash
-source .venv/bin/activate
-pytest -q
-python3 scripts/check_sdk_roundtrip.py
-npx -y -p tsx tsx scripts/check_ts_sdk_roundtrip.ts
-npx -y -p typescript tsc --noEmit ts-sdk/src/index.ts
-node --check src/clawpass_server/web/app.js
-```
-
-Regenerate OpenAPI when routes or schemas changed:
-
-```bash
-source .venv/bin/activate
-python - <<'PY' > docs/openapi.json
-import json
-from clawpass_server.app import create_app
-app = create_app()
-print(json.dumps(app.openapi(), indent=2))
-PY
-```
+For runtime changes, the minimum meaningful validation still includes:
+- `pytest -q`
+- `python3 scripts/check_sdk_roundtrip.py`
+- `npx -y -p tsx tsx scripts/check_ts_sdk_roundtrip.ts`
+- `npx -y -p typescript tsc --noEmit ts-sdk/src/index.ts`
+- `node --check src/clawpass_server/web/app.js`
 
 ## Autoresearch
 
-Use the repo-local harness for bounded improvement loops. Keep changed files inside the allowed surface declared in `autoresearch/benchmark-pack.*.json`.
-
-Fast pack:
-
-```bash
-source .venv/bin/activate
-python3 scripts/repo_autoresearch_eval.py \
-  --pack autoresearch/benchmark-pack.fast.json \
-  --diff-ref HEAD \
-  --results-tsv state/autoresearch/results.tsv \
-  --description "candidate"
-```
-
-Full pack:
-
-```bash
-source .venv/bin/activate
-python3 scripts/repo_autoresearch_eval.py \
-  --pack autoresearch/benchmark-pack.full.json \
-  --diff-ref HEAD \
-  --results-tsv state/autoresearch/results.tsv \
-  --description "candidate-full"
-```
+Use the repo-local harness for bounded improvement loops. Keep changed files inside the allowed surface declared in `autoresearch/benchmark-pack.*.json` and use [CONTRIBUTING.md](./CONTRIBUTING.md) for the canonical fast/full pack commands.
 
 ## Documentation rules
 
