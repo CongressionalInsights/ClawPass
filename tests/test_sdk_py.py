@@ -41,6 +41,7 @@ class _FakeHttpClient:
                     "leased_backlog_count": 0,
                     "stalled_backlog_count": 1,
                     "scheduled_retry_count": 0,
+                    "dead_lettered_count": 0,
                     "failure_rate": 0.5,
                     "redelivery_count": 1,
                     "health_state": "warning",
@@ -58,6 +59,8 @@ class _FakeHttpClient:
                         "lease_expires_at": None,
                         "retry_parent_id": None,
                         "retry_attempt": 0,
+                        "dead_lettered_at": None,
+                        "dead_letter_reason": None,
                     }
                 ]
             )
@@ -171,6 +174,8 @@ def test_python_sdk_list_webhook_events_forwards_request_filter():
             "lease_expires_at": None,
             "retry_parent_id": None,
             "retry_attempt": 0,
+            "dead_lettered_at": None,
+            "dead_letter_reason": None,
         }
     ]
 
@@ -216,5 +221,6 @@ def test_python_sdk_get_webhook_summary_uses_summary_endpoint():
     assert response["backlog_count"] == 1
     assert response["stalled_backlog_count"] == 1
     assert response["scheduled_retry_count"] == 0
+    assert response["dead_lettered_count"] == 0
     assert response["failure_rate"] == 0.5
     assert response["redelivery_count"] == 1

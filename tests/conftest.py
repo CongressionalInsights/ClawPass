@@ -70,6 +70,8 @@ def settings(tmp_path: Path) -> Settings:
         webhook_retry_poll_seconds=0,
         webhook_auto_retry_limit=2,
         webhook_auto_retry_base_delay_seconds=30,
+        webhook_auto_retry_max_delay_seconds=300,
+        webhook_auto_retry_jitter_seconds=10,
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,

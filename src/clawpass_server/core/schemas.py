@@ -125,6 +125,8 @@ class WebhookEventResponse(BaseModel):
     lease_expires_at: str | None = None
     retry_parent_id: str | None = None
     retry_attempt: int = 0
+    dead_lettered_at: str | None = None
+    dead_letter_reason: str | None = None
     created_at: str
     updated_at: str
 
@@ -135,6 +137,7 @@ class WebhookDeliverySummary(BaseModel):
     leased_backlog_count: int
     stalled_backlog_count: int
     scheduled_retry_count: int
+    dead_lettered_count: int
     delivered_count: int
     failed_count: int
     skipped_count: int

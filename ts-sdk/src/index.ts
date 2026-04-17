@@ -59,6 +59,8 @@ export interface WebhookEvent {
   lease_expires_at: string | null;
   retry_parent_id: string | null;
   retry_attempt: number;
+  dead_lettered_at: string | null;
+  dead_letter_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +73,7 @@ export interface WebhookDeliverySummary {
   leased_backlog_count: number;
   stalled_backlog_count: number;
   scheduled_retry_count: number;
+  dead_lettered_count: number;
   delivered_count: number;
   failed_count: number;
   skipped_count: number;

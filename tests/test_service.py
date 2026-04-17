@@ -223,6 +223,7 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
     assert events[0].status == "failed"
     assert events[0].attempt_count == 1
     assert events[0].last_error == "bad request"
+    assert events[0].dead_lettered_at is None
 
 
 def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(monkeypatch, service):
@@ -349,11 +350,112 @@ def test_failed_delivery_schedules_automatic_retry_with_backoff(monkeypatch, ser
     assert retry_event.retry_parent_id == failed_events[0].id
     assert retry_event.retry_attempt == 1
     assert retry_event.available_at is not None
-    assert parse_iso(retry_event.available_at) > utc_now()
+    retry_delay_seconds = (parse_iso(retry_event.available_at) - utc_now()).total_seconds()
+    assert retry_delay_seconds >= service._settings.webhook_auto_retry_base_delay_seconds - 1
+    assert (
+        retry_delay_seconds
+        <= service._settings.webhook_auto_retry_base_delay_seconds + service._settings.webhook_auto_retry_jitter_seconds + 1
+    )
 
     summary = service.get_webhook_delivery_summary()
     assert summary.scheduled_retry_count == 1
     assert summary.redelivery_count == 1
+    assert summary.dead_lettered_count == 0
+
+
+def test_retry_schedule_caps_delay_and_marks_dead_letter_when_budget_exhausted(monkeypatch, service):
+    service._settings.webhook_auto_retry_limit = 2
+    service._settings.webhook_auto_retry_base_delay_seconds = 30
+    service._settings.webhook_auto_retry_max_delay_seconds = 40
+    service._settings.webhook_auto_retry_jitter_seconds = 10
+
+    created_at = utc_now().isoformat().replace("+00:00", "Z")
+    service._db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+          dead_letter_reason, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-cap-parent",
+            "req-cap",
+            "approval.pending",
+            json.dumps({"request_id": "req-cap"}),
+            "https://example.com/webhooks",
+            "failed",
+            "timed out",
+            2,
+            None,
+            None,
+            None,
+            None,
+            1,
+            None,
+            None,
+            created_at,
+            created_at,
+        ),
+    )
+    parent_row = service._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", ("whevt-cap-parent",))
+    service._webhooks._maybe_schedule_retry(parent_row)
+
+    queued = service.list_webhook_events("req-cap", status="queued")
+    assert len(queued) == 1
+    capped_delay_seconds = (parse_iso(queued[0].available_at) - utc_now()).total_seconds()
+    assert capped_delay_seconds <= service._settings.webhook_auto_retry_max_delay_seconds + 1
+    assert queued[0].retry_attempt == 2
+    service._db.execute("DELETE FROM webhook_events WHERE request_id = ?", ("req-cap",))
+
+    service._settings.webhook_auto_retry_limit = 1
+    service._settings.webhook_auto_retry_base_delay_seconds = 0
+    service._settings.webhook_auto_retry_max_delay_seconds = 0
+    service._settings.webhook_auto_retry_jitter_seconds = 0
+    tasks = []
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            request = httpx.Request("POST", url)
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: tasks.append(task))
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:dead-letter",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+    assert len(tasks) == 1
+    tasks[0]()
+    assert len(tasks) == 2
+    tasks[1]()
+
+    events = service.list_webhook_events(request.id)
+    dead_lettered = [event for event in events if event.dead_lettered_at]
+    assert len(dead_lettered) == 1
+    assert dead_lettered[0].status == "failed"
+    assert "retry budget exhausted" in dead_lettered[0].dead_letter_reason
+
+    summary = service.get_webhook_delivery_summary()
+    assert summary.scheduled_retry_count == 0
+    assert summary.dead_lettered_count == 1
+    assert any("dead-lettered" in alert for alert in summary.alerts)
 
 
 def test_webhook_delivery_lease_prevents_duplicate_multi_instance_delivery(monkeypatch, settings):
