@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     webauthn = WebAuthnAdapter(settings)
     ethereum = EthereumAdapter()
     service = ClawPassService(settings=settings, db=db, webauthn=webauthn, ethereum=ethereum)
+    service.recover_queued_webhook_events()
 
     app = FastAPI(
         title="ClawPass",

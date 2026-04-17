@@ -51,6 +51,7 @@ clawpass-server
 - `POST /v1/signers/ethereum/verify`
 - `GET /v1/approvers/{approver_id}/summary`
 - `GET /v1/webhook-events`
+- `GET /v1/webhook-summary`
 - `POST /v1/webhook-events/{id}/redeliver`
 
 ## Docs

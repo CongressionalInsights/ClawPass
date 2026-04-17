@@ -61,6 +61,22 @@ export interface WebhookEvent {
 
 export type WebhookEventStatus = "queued" | "skipped" | "delivered" | "failed";
 
+export interface WebhookDeliverySummary {
+  total_events: number;
+  backlog_count: number;
+  delivered_count: number;
+  failed_count: number;
+  skipped_count: number;
+  attempted_count: number;
+  failure_rate: number;
+  redelivery_count: number;
+  redelivery_backlog_count: number;
+  redelivery_delivered_count: number;
+  redelivery_failed_count: number;
+  oldest_queued_at: string | null;
+  last_event_at: string | null;
+}
+
 export interface WebhookEventListFilters {
   requestId?: string;
   status?: WebhookEventStatus;
@@ -145,6 +161,10 @@ export class ClawPassClient {
     const query = params.toString();
     const search = query ? `?${query}` : "";
     return this.request<WebhookEvent[]>(`/v1/webhook-events${search}`);
+  }
+
+  getWebhookSummary() {
+    return this.request<WebhookDeliverySummary>("/v1/webhook-summary");
   }
 
   redeliverWebhookEvent(eventId: string) {

@@ -76,6 +76,10 @@ def main() -> int:
             if not events or events[0]["event_type"] != "approval.cancelled":
                 raise RuntimeError(f"Unexpected webhook events: {events}")
 
+            summary = client.get_webhook_summary()
+            if summary["backlog_count"] != 0 or summary["redelivery_count"] != 0:
+                raise RuntimeError(f"Unexpected webhook summary: {summary}")
+
             fetched = client.get_approval_request(created["id"])
             if fetched["id"] != created["id"] or fetched["status"] != "CANCELLED":
                 raise RuntimeError(f"Unexpected fetch response: {fetched}")

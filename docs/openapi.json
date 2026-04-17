@@ -615,6 +615,27 @@
         }
       }
     },
+    "/v1/webhook-summary": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Webhook Summary",
+        "operationId": "webhook_summary_v1_webhook_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliverySummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/webhook-events/{event_id}/redeliver": {
       "post": {
         "tags": [
@@ -1378,6 +1399,93 @@
           "public_key_options"
         ],
         "title": "WebAuthnRegisterStartResponse"
+      },
+      "WebhookDeliverySummary": {
+        "properties": {
+          "total_events": {
+            "type": "integer",
+            "title": "Total Events"
+          },
+          "backlog_count": {
+            "type": "integer",
+            "title": "Backlog Count"
+          },
+          "delivered_count": {
+            "type": "integer",
+            "title": "Delivered Count"
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count"
+          },
+          "skipped_count": {
+            "type": "integer",
+            "title": "Skipped Count"
+          },
+          "attempted_count": {
+            "type": "integer",
+            "title": "Attempted Count"
+          },
+          "failure_rate": {
+            "type": "number",
+            "title": "Failure Rate"
+          },
+          "redelivery_count": {
+            "type": "integer",
+            "title": "Redelivery Count"
+          },
+          "redelivery_backlog_count": {
+            "type": "integer",
+            "title": "Redelivery Backlog Count"
+          },
+          "redelivery_delivered_count": {
+            "type": "integer",
+            "title": "Redelivery Delivered Count"
+          },
+          "redelivery_failed_count": {
+            "type": "integer",
+            "title": "Redelivery Failed Count"
+          },
+          "oldest_queued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Queued At"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_events",
+          "backlog_count",
+          "delivered_count",
+          "failed_count",
+          "skipped_count",
+          "attempted_count",
+          "failure_rate",
+          "redelivery_count",
+          "redelivery_backlog_count",
+          "redelivery_delivered_count",
+          "redelivery_failed_count",
+          "oldest_queued_at",
+          "last_event_at"
+        ],
+        "title": "WebhookDeliverySummary"
       },
       "WebhookEventResponse": {
         "properties": {
