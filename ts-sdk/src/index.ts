@@ -59,12 +59,14 @@ export interface WebhookEvent {
   updated_at: string;
 }
 
-export type WebhookEventStatus = "skipped" | "delivered" | "failed";
+export type WebhookEventStatus = "queued" | "skipped" | "delivered" | "failed";
 
 export interface WebhookEventListFilters {
   requestId?: string;
   status?: WebhookEventStatus;
   eventType?: string;
+  limit?: number;
+  cursor?: string;
 }
 
 export class ClawPassClient {
@@ -133,6 +135,12 @@ export class ClawPassClient {
     }
     if (normalized.eventType) {
       params.set("event_type", normalized.eventType);
+    }
+    if (normalized.limit !== undefined) {
+      params.set("limit", String(normalized.limit));
+    }
+    if (normalized.cursor) {
+      params.set("cursor", normalized.cursor);
     }
     const query = params.toString();
     const search = query ? `?${query}` : "";

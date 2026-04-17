@@ -98,9 +98,17 @@ def get_router(get_service: callable) -> APIRouter:
         request_id: str | None = Query(default=None),
         status: str | None = Query(default=None),
         event_type: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=200),
+        cursor: str | None = Query(default=None),
         svc: ClawPassService = Depends(service),
     ) -> list[WebhookEventResponse]:
-        return svc.list_webhook_events(request_id=request_id, status=status, event_type=event_type)
+        return svc.list_webhook_events(
+            request_id=request_id,
+            status=status,
+            event_type=event_type,
+            limit=limit,
+            cursor=cursor,
+        )
 
     @router.post("/webhook-events/{event_id}/redeliver", response_model=WebhookEventResponse)
     def redeliver_webhook_event(event_id: str, svc: ClawPassService = Depends(service)) -> WebhookEventResponse:

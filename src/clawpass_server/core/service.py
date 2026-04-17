@@ -607,7 +607,11 @@ class ClawPassService:
         *,
         status: str | None = None,
         event_type: str | None = None,
+        limit: int = 200,
+        cursor: str | None = None,
     ) -> list[WebhookEventResponse]:
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 200.")
         clauses: list[str] = []
         params: list[str] = []
 
@@ -626,11 +630,16 @@ class ClawPassService:
             clauses.append("event_type = ?")
             params.append(event_type)
 
+        if cursor:
+            cursor_row = self._require_webhook_event(cursor)
+            clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+            params.extend([cursor_row["created_at"], cursor_row["created_at"], cursor_row["id"]])
+
         query = "SELECT * FROM webhook_events"
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY created_at DESC LIMIT 200"
-        rows = self._db.fetchall(query, tuple(params))
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        rows = self._db.fetchall(query, tuple(params + [str(limit)]))
         return [WebhookEventResponse(**row) for row in rows]
 
     def redeliver_webhook_event(self, event_id: str) -> WebhookEventResponse:

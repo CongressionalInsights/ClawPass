@@ -25,7 +25,7 @@ class _FakeHttpClient:
         if path.endswith("/cancel"):
             return _DummyResponse({"id": path.split("/")[-2], "status": "CANCELLED", "decision": "CANCELLED"})
         if path.endswith("/redeliver"):
-            return _DummyResponse({"id": "whevt-redelivered", "status": "delivered"})
+            return _DummyResponse({"id": "whevt-redelivered", "status": "queued"})
         raise AssertionError(f"Unexpected POST {path}")
 
     def get(self, path, params=None):
@@ -33,7 +33,15 @@ class _FakeHttpClient:
         if path == "/v1/approval-requests":
             return _DummyResponse([{"id": "req-pending", "status": "PENDING"}])
         if path == "/v1/webhook-events":
-            return _DummyResponse([{"request_id": params["request_id"], "event_type": params.get("event_type", "approval.cancelled")}])
+            return _DummyResponse(
+                [
+                    {
+                        "request_id": params["request_id"],
+                        "event_type": params.get("event_type", "approval.cancelled"),
+                        "status": params.get("status", "skipped"),
+                    }
+                ]
+            )
         if path.startswith("/v1/approvers/") and path.endswith("/summary"):
             return _DummyResponse({"id": path.split("/")[-2], "email": "approver@example.org", "passkey_count": 1})
         if path.startswith("/v1/approval-requests/"):
@@ -114,16 +122,28 @@ def test_python_sdk_list_webhook_events_forwards_request_filter():
     fake_client = _FakeHttpClient()
     client._client = fake_client
     try:
-        response = client.list_webhook_events(request_id="req-cancel", status="failed", event_type="approval.pending")
+        response = client.list_webhook_events(
+            request_id="req-cancel",
+            status="failed",
+            event_type="approval.pending",
+            limit=25,
+            cursor="whevt-cursor",
+        )
     finally:
         client.close()
 
     assert fake_client.calls[0] == (
         "get",
         "/v1/webhook-events",
-        {"request_id": "req-cancel", "status": "failed", "event_type": "approval.pending"},
+        {
+            "request_id": "req-cancel",
+            "status": "failed",
+            "event_type": "approval.pending",
+            "limit": 25,
+            "cursor": "whevt-cursor",
+        },
     )
-    assert response == [{"request_id": "req-cancel", "event_type": "approval.pending"}]
+    assert response == [{"request_id": "req-cancel", "event_type": "approval.pending", "status": "failed"}]
 
 
 def test_python_sdk_redeliver_webhook_event_forwards_event_id():
@@ -137,4 +157,4 @@ def test_python_sdk_redeliver_webhook_event_forwards_event_id():
 
     assert fake_client.calls[0] == ("post", "/v1/webhook-events/whevt-failed/redeliver", {})
     assert response["id"] == "whevt-redelivered"
-    assert response["status"] == "delivered"
+    assert response["status"] == "queued"
