@@ -11,7 +11,7 @@ import json
 import time
 from dataclasses import dataclass
 
-from ledgerclaw_sdk_py import ClawPassClient
+from clawpass_sdk_py import ClawPassClient
 
 
 @dataclass(slots=True)

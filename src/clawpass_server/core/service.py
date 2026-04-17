@@ -7,11 +7,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ledgerclaw_server.adapters.ethereum_adapter import EthereumAdapter
-from ledgerclaw_server.adapters.webauthn_adapter import WebAuthnAdapter
-from ledgerclaw_server.core.audit import AuditLogger
-from ledgerclaw_server.core.config import Settings
-from ledgerclaw_server.core.constants import (
+from clawpass_server.adapters.ethereum_adapter import EthereumAdapter
+from clawpass_server.adapters.webauthn_adapter import WebAuthnAdapter
+from clawpass_server.core.audit import AuditLogger
+from clawpass_server.core.config import Settings
+from clawpass_server.core.constants import (
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_CANCELLED,
     APPROVAL_STATUS_DENIED,
@@ -29,9 +29,9 @@ from ledgerclaw_server.core.constants import (
     VALID_APPROVAL_STATUSES,
     VALID_RISK_LEVELS,
 )
-from ledgerclaw_server.core.database import Database
-from ledgerclaw_server.core.policy import PolicyEngine
-from ledgerclaw_server.core.schemas import (
+from clawpass_server.core.database import Database
+from clawpass_server.core.policy import PolicyEngine
+from clawpass_server.core.schemas import (
     ApprovalRequestResponse,
     ApproverIdentityIn,
     ApproverSummary,
@@ -49,11 +49,11 @@ from ledgerclaw_server.core.schemas import (
     WebAuthnRegisterStartResponse,
     WebhookEventResponse,
 )
-from ledgerclaw_server.core.utils import add_minutes_iso, json_dumps, parse_iso, stable_id, token_urlsafe, utc_now, utc_now_iso
-from ledgerclaw_server.core.webhooks import WebhookDispatcher
+from clawpass_server.core.utils import add_minutes_iso, json_dumps, parse_iso, stable_id, token_urlsafe, utc_now, utc_now_iso
+from clawpass_server.core.webhooks import WebhookDispatcher
 
 
-class LedgerClawService:
+class ClawPassService:
     def __init__(self, *, settings: Settings, db: Database, webauthn: WebAuthnAdapter, ethereum: EthereumAdapter) -> None:
         self._settings = settings
         self._db = db
@@ -745,4 +745,4 @@ class LedgerClawService:
         )
 
 
-ClawPassService = LedgerClawService
+LedgerClawService = ClawPassService

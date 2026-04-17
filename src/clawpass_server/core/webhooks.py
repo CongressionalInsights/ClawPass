@@ -6,9 +6,9 @@ from typing import Any
 
 import httpx
 
-from ledgerclaw_server.core.config import Settings
-from ledgerclaw_server.core.database import Database
-from ledgerclaw_server.core.utils import json_dumps, stable_id, utc_now_iso
+from clawpass_server.core.config import Settings
+from clawpass_server.core.database import Database
+from clawpass_server.core.utils import json_dumps, stable_id, utc_now_iso
 
 
 class WebhookDispatcher:

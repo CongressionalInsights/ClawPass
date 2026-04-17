@@ -10,7 +10,7 @@ To export locally:
 ```bash
 python - <<'PY'
 import json
-from ledgerclaw_server.app import create_app
+from clawpass_server.app import create_app
 app = create_app()
 print(json.dumps(app.openapi(), indent=2))
 PY

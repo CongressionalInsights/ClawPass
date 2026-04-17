@@ -10,10 +10,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from ledgerclaw_server.adapters.ethereum_adapter import EthereumAdapter  # noqa: E402
-from ledgerclaw_server.core.config import Settings  # noqa: E402
-from ledgerclaw_server.core.database import Database  # noqa: E402
-from ledgerclaw_server.core.service import ClawPassService  # noqa: E402
+from clawpass_server.adapters.ethereum_adapter import EthereumAdapter  # noqa: E402
+from clawpass_server.core.config import Settings  # noqa: E402
+from clawpass_server.core.database import Database  # noqa: E402
+from clawpass_server.core.service import ClawPassService  # noqa: E402
 
 
 class FakeWebAuthnAdapter:

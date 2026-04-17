@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import uvicorn
 
-from ledgerclaw_server.app import create_app
-from ledgerclaw_server.core.config import load_settings
+from clawpass_server.app import create_app
+from clawpass_server.core.config import load_settings
 
 
 def main() -> None:

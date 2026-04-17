@@ -6,9 +6,9 @@ from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
-from ledgerclaw_sdk_py import ClawPassClient
-from ledgerclaw_server.app import create_app
-from ledgerclaw_server.core.config import Settings
+from clawpass_sdk_py import ClawPassClient
+from clawpass_server.app import create_app
+from clawpass_server.core.config import Settings
 
 
 class _TestClientAdapter:

@@ -6,12 +6,12 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from ledgerclaw_server.adapters.ethereum_adapter import EthereumAdapter
-from ledgerclaw_server.adapters.webauthn_adapter import WebAuthnAdapter
-from ledgerclaw_server.api.routes import get_router
-from ledgerclaw_server.core.config import Settings, load_settings
-from ledgerclaw_server.core.database import Database
-from ledgerclaw_server.core.service import LedgerClawService
+from clawpass_server.adapters.ethereum_adapter import EthereumAdapter
+from clawpass_server.adapters.webauthn_adapter import WebAuthnAdapter
+from clawpass_server.api.routes import get_router
+from clawpass_server.core.config import Settings, load_settings
+from clawpass_server.core.database import Database
+from clawpass_server.core.service import ClawPassService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -21,7 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     webauthn = WebAuthnAdapter(settings)
     ethereum = EthereumAdapter()
-    service = LedgerClawService(settings=settings, db=db, webauthn=webauthn, ethereum=ethereum)
+    service = ClawPassService(settings=settings, db=db, webauthn=webauthn, ethereum=ethereum)
 
     app = FastAPI(
         title="ClawPass",
@@ -29,7 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Dual-mode approval platform with first-class passkey onboarding.",
     )
 
-    def get_service() -> LedgerClawService:
+    def get_service() -> ClawPassService:
         return service
 
     app.include_router(get_router(get_service))

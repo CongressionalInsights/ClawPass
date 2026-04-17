@@ -11,10 +11,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from ledgerclaw_server.app import create_app
-from ledgerclaw_server.core.config import Settings
-from ledgerclaw_server.core.database import Database
-from ledgerclaw_server.core.utils import utc_now
+from clawpass_server.app import create_app
+from clawpass_server.core.config import Settings
+from clawpass_server.core.database import Database
+from clawpass_server.core.utils import utc_now
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -35,7 +35,7 @@ def _settings(tmp_path: Path) -> Settings:
 
 
 def test_api_flow_with_mocked_webauthn(monkeypatch, tmp_path: Path):
-    from ledgerclaw_server.adapters import webauthn_adapter
+    from clawpass_server.adapters import webauthn_adapter
 
     class DummyRegistration:
         credential_id = "cred-api"
