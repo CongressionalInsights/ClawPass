@@ -32,6 +32,8 @@ class Settings:
     webhook_failure_rate_alert_threshold: float
     webhook_event_retention_days: int
     webhook_retry_history_retention_days: int
+    webhook_endpoint_auto_mute_threshold: int
+    webhook_endpoint_auto_mute_seconds: int
     webhook_secret: str | None
 
 
@@ -108,6 +110,20 @@ def load_settings() -> Settings:
                 "CLAWPASS_WEBHOOK_RETRY_HISTORY_RETENTION_DAYS",
                 "LEDGERCLAW_WEBHOOK_RETRY_HISTORY_RETENTION_DAYS",
                 "30",
+            )
+        ),
+        webhook_endpoint_auto_mute_threshold=int(
+            _env(
+                "CLAWPASS_WEBHOOK_ENDPOINT_AUTO_MUTE_THRESHOLD",
+                "LEDGERCLAW_WEBHOOK_ENDPOINT_AUTO_MUTE_THRESHOLD",
+                "3",
+            )
+        ),
+        webhook_endpoint_auto_mute_seconds=int(
+            _env(
+                "CLAWPASS_WEBHOOK_ENDPOINT_AUTO_MUTE_SECONDS",
+                "LEDGERCLAW_WEBHOOK_ENDPOINT_AUTO_MUTE_SECONDS",
+                "600",
             )
         ),
         webhook_secret=os.getenv("CLAWPASS_WEBHOOK_SECRET") or os.getenv("LEDGERCLAW_WEBHOOK_SECRET") or None,

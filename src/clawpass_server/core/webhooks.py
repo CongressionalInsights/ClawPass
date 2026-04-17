@@ -52,6 +52,9 @@ class WebhookDispatcher:
 
         if callback_url:
             status = WEBHOOK_STATUS_QUEUED
+            muted_until = self._active_muted_until(callback_url)
+            if muted_until and parse_iso(available_at) < parse_iso(muted_until):
+                available_at = muted_until
 
         self._db.execute(
             """
@@ -96,7 +99,7 @@ class WebhookDispatcher:
         now = utc_now_iso()
         rows = self._db.fetchall(
             """
-            SELECT id, event_type, payload_json, callback_url
+            SELECT id, event_type, payload_json, callback_url, available_at
             FROM webhook_events
             WHERE status = ? AND callback_url IS NOT NULL
               AND (available_at IS NULL OR available_at <= ?)
@@ -106,6 +109,9 @@ class WebhookDispatcher:
             (WEBHOOK_STATUS_QUEUED, now, now),
         )
         for row in rows:
+            if self._active_muted_until(row["callback_url"]):
+                self.defer_event_until_mute(row["id"])
+                continue
             self._schedule_delivery(
                 event_id=row["id"],
                 event_type=row["event_type"],
@@ -142,6 +148,9 @@ class WebhookDispatcher:
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
         if not row or row["status"] != WEBHOOK_STATUS_QUEUED or not row.get("callback_url"):
             return None
+        if self._active_muted_until(row["callback_url"]):
+            self.defer_event_until_mute(event_id)
+            return WebhookEventResponse(**self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,)))
         snapshot = WebhookEventResponse(**row)
         available_at = row.get("available_at")
         if not available_at or parse_iso(available_at) <= utc_now():
@@ -152,6 +161,27 @@ class WebhookDispatcher:
                 callback_url=row["callback_url"],
             )
         return snapshot
+
+    def defer_event_until_mute(self, event_id: str) -> WebhookEventResponse | None:
+        row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
+        if not row or row["status"] != WEBHOOK_STATUS_QUEUED or not row.get("callback_url"):
+            return None
+        muted_until = self._active_muted_until(row["callback_url"])
+        if not muted_until:
+            return WebhookEventResponse(**row)
+        available_at = row.get("available_at")
+        effective_available_at = muted_until
+        if available_at and parse_iso(available_at) > parse_iso(muted_until):
+            effective_available_at = available_at
+        self._db.execute(
+            """
+            UPDATE webhook_events
+            SET available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (effective_available_at, utc_now_iso(), event_id),
+        )
+        return WebhookEventResponse(**self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,)))
 
     def _delivery_headers(self, *, event_id: str, event_type: str, payload_json: str) -> dict[str, str]:
         headers = {
@@ -176,6 +206,9 @@ class WebhookDispatcher:
             return
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
         if not row:
+            return
+        if self._active_muted_until(callback_url):
+            self.defer_event_until_mute(event_id)
             return
         status = WEBHOOK_STATUS_FAILED
         error: str | None = None
@@ -208,6 +241,7 @@ class WebhookDispatcher:
             """,
             (status, error, attempts, utc_now_iso(), event_id, self._settings.instance_id),
         )
+        self._sync_endpoint_control_after_delivery(callback_url=callback_url, status=status)
         if status == WEBHOOK_STATUS_FAILED and retryable_failure:
             self._maybe_schedule_retry(row)
 
@@ -244,6 +278,57 @@ class WebhookDispatcher:
             ),
         )
         return claimed == 1
+
+    def _active_muted_until(self, callback_url: str | None) -> str | None:
+        if not callback_url:
+            return None
+        row = self._db.fetchone(
+            "SELECT muted_until FROM webhook_endpoint_controls WHERE callback_url = ?",
+            (callback_url,),
+        )
+        if not row or not row.get("muted_until"):
+            return None
+        if parse_iso(row["muted_until"]) <= utc_now():
+            return None
+        return row["muted_until"]
+
+    def _sync_endpoint_control_after_delivery(self, *, callback_url: str, status: str) -> None:
+        row = self._db.fetchone(
+            "SELECT * FROM webhook_endpoint_controls WHERE callback_url = ?",
+            (callback_url,),
+        )
+        consecutive_failure_count = int(row.get("consecutive_failure_count") or 0) if row else 0
+        muted_until = row.get("muted_until") if row else None
+        mute_reason = row.get("mute_reason") if row else None
+        if status == WEBHOOK_STATUS_DELIVERED:
+            consecutive_failure_count = 0
+        elif status == WEBHOOK_STATUS_FAILED:
+            consecutive_failure_count += 1
+            if (
+                self._settings.webhook_endpoint_auto_mute_threshold > 0
+                and self._settings.webhook_endpoint_auto_mute_seconds > 0
+                and consecutive_failure_count >= self._settings.webhook_endpoint_auto_mute_threshold
+            ):
+                auto_muted_until = add_seconds_iso(self._settings.webhook_endpoint_auto_mute_seconds)
+                if not muted_until or parse_iso(muted_until) <= utc_now() or parse_iso(auto_muted_until) > parse_iso(muted_until):
+                    muted_until = auto_muted_until
+                    mute_reason = (
+                        f"Automatically muted after {consecutive_failure_count} consecutive delivery failures."
+                    )
+        self._db.execute(
+            """
+            INSERT INTO webhook_endpoint_controls(
+              callback_url, muted_until, mute_reason, consecutive_failure_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(callback_url) DO UPDATE SET
+              muted_until = excluded.muted_until,
+              mute_reason = excluded.mute_reason,
+              consecutive_failure_count = excluded.consecutive_failure_count,
+              updated_at = excluded.updated_at
+            """,
+            (callback_url, muted_until, mute_reason, consecutive_failure_count, utc_now_iso()),
+        )
 
     def _maybe_schedule_retry(self, row: dict[str, Any]) -> None:
         current_retry_attempt = int(row.get("retry_attempt") or 0)

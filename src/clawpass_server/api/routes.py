@@ -20,9 +20,13 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterStartRequest,
     WebAuthnRegisterStartResponse,
     WebhookDeliverySummary,
+    WebhookEndpointControlResponse,
+    WebhookEndpointMuteRequest,
     WebhookEndpointSummary,
     WebhookEventResponse,
+    WebhookPruneHistoryEntry,
     WebhookPruneResult,
+    WebhookEndpointUnmuteRequest,
 )
 from clawpass_server.core.service import ClawPassService
 
@@ -101,6 +105,7 @@ def get_router(get_service: callable) -> APIRouter:
         request_id: str | None = Query(default=None),
         status: str | None = Query(default=None),
         event_type: str | None = Query(default=None),
+        callback_url: str | None = Query(default=None),
         limit: int = Query(default=200, ge=1, le=200),
         cursor: str | None = Query(default=None),
         svc: ClawPassService = Depends(service),
@@ -109,6 +114,7 @@ def get_router(get_service: callable) -> APIRouter:
             request_id=request_id,
             status=status,
             event_type=event_type,
+            callback_url=callback_url,
             limit=limit,
             cursor=cursor,
         )
@@ -124,9 +130,30 @@ def get_router(get_service: callable) -> APIRouter:
     ) -> list[WebhookEndpointSummary]:
         return svc.list_webhook_endpoint_summaries(limit=limit)
 
+    @router.post("/webhook-endpoints/mute", response_model=WebhookEndpointControlResponse)
+    def mute_webhook_endpoint(
+        payload: WebhookEndpointMuteRequest,
+        svc: ClawPassService = Depends(service),
+    ) -> WebhookEndpointControlResponse:
+        return svc.mute_webhook_endpoint(payload, actor="system")
+
+    @router.post("/webhook-endpoints/unmute", response_model=WebhookEndpointControlResponse)
+    def unmute_webhook_endpoint(
+        payload: WebhookEndpointUnmuteRequest,
+        svc: ClawPassService = Depends(service),
+    ) -> WebhookEndpointControlResponse:
+        return svc.unmute_webhook_endpoint(payload, actor="system")
+
     @router.post("/webhook-events/prune", response_model=WebhookPruneResult)
     def prune_webhook_events(svc: ClawPassService = Depends(service)) -> WebhookPruneResult:
         return svc.prune_webhook_history(emit_audit=True, actor="system")
+
+    @router.get("/webhook-prune-history", response_model=list[WebhookPruneHistoryEntry])
+    def webhook_prune_history(
+        limit: int = Query(default=20, ge=1, le=100),
+        svc: ClawPassService = Depends(service),
+    ) -> list[WebhookPruneHistoryEntry]:
+        return svc.list_webhook_prune_history(limit=limit)
 
     @router.post("/webhook-events/{event_id}/redeliver", response_model=WebhookEventResponse)
     def redeliver_webhook_event(event_id: str, svc: ClawPassService = Depends(service)) -> WebhookEventResponse:

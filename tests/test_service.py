@@ -16,6 +16,8 @@ from clawpass_server.core.schemas import (
     DecisionStartRequest,
     EthereumSignerChallengeRequest,
     EthereumSignerVerifyRequest,
+    WebhookEndpointMuteRequest,
+    WebhookEndpointUnmuteRequest,
     WebAuthnRegisterCompleteRequest,
     WebAuthnRegisterStartRequest,
 )
@@ -449,6 +451,154 @@ def test_webhook_endpoint_summaries_group_failures_by_callback_url(service):
     assert summaries[0].latest_error == "upstream timeout"
     assert summaries[1].callback_url == "https://example.com/webhooks/b"
     assert summaries[1].health_state == "healthy"
+
+
+def test_failed_delivery_auto_mutes_endpoint_and_delays_retry(monkeypatch, service):
+    service._settings.webhook_endpoint_auto_mute_threshold = 1
+    service._settings.webhook_endpoint_auto_mute_seconds = 600
+    tasks = []
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            request = httpx.Request("POST", url)
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: tasks.append(task))
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:auto-mute",
+            risk_level="low",
+            callback_url="https://example.com/webhooks/auto-mute",
+        )
+    )
+    assert len(tasks) == 1
+    tasks[0]()
+
+    summaries = service.list_webhook_endpoint_summaries(limit=10)
+    endpoint = next(summary for summary in summaries if summary.callback_url.endswith("/auto-mute"))
+    assert endpoint.health_state == "warning"
+    assert endpoint.muted_until is not None
+    assert endpoint.mute_reason is not None
+    assert "Automatically muted" in endpoint.mute_reason
+    assert endpoint.consecutive_failure_count == 1
+
+    queued = service.list_webhook_events(request.id, status="queued")
+    assert len(queued) == 1
+    assert queued[0].available_at is not None
+    assert parse_iso(queued[0].available_at) >= parse_iso(endpoint.muted_until)
+
+
+def test_manual_mute_unmute_and_prune_history(service, monkeypatch):
+    callback_url = "https://example.com/webhooks/manual"
+    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    available_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    old_delivered_at = (utc_now() - timedelta(days=20)).isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: None)
+
+    service._db.execute_many(
+        [
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-manual-queued",
+                    "req-manual-queued",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-manual-queued"}),
+                    callback_url,
+                    "queued",
+                    None,
+                    0,
+                    None,
+                    None,
+                    available_at,
+                    None,
+                    0,
+                    None,
+                    None,
+                    created_at,
+                    created_at,
+                ),
+            ),
+            (
+                """
+                INSERT INTO webhook_events(
+                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+                  dead_letter_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "whevt-manual-old",
+                    "req-manual-old",
+                    "approval.pending",
+                    json.dumps({"request_id": "req-manual-old"}),
+                    callback_url,
+                    "delivered",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    old_delivered_at,
+                    old_delivered_at,
+                ),
+            ),
+        ]
+    )
+
+    muted = service.mute_webhook_endpoint(
+        WebhookEndpointMuteRequest(callback_url=callback_url, muted_for_seconds=300, reason="operator pause"),
+        actor="operator",
+    )
+    assert muted.callback_url == callback_url
+    assert muted.muted_until is not None
+    assert muted.mute_reason == "operator pause"
+
+    queued_during_mute = service.list_webhook_events(request_id="req-manual-queued")[0]
+    assert parse_iso(queued_during_mute.available_at) >= parse_iso(muted.muted_until)
+
+    pruned = service.prune_webhook_history(emit_audit=True, actor="operator")
+    assert pruned.total_deleted == 1
+
+    history = service.list_webhook_prune_history(limit=5)
+    assert history[0].actor == "operator"
+    assert history[0].total_deleted == 1
+
+    unmuted = service.unmute_webhook_endpoint(
+        WebhookEndpointUnmuteRequest(callback_url=callback_url),
+        actor="operator",
+    )
+    assert unmuted.muted_until is None
+    assert unmuted.mute_reason is None
+
+    released = service.list_webhook_events(request_id="req-manual-queued")[0]
+    assert released.available_at is not None
+    assert parse_iso(released.available_at) <= utc_now() + timedelta(seconds=1)
 
 
 def test_failed_delivery_schedules_automatic_retry_with_backoff(monkeypatch, service):

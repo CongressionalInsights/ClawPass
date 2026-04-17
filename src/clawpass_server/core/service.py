@@ -52,12 +52,25 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterStartRequest,
     WebAuthnRegisterStartResponse,
+    WebhookEndpointControlResponse,
+    WebhookEndpointMuteRequest,
     WebhookDeliverySummary,
     WebhookEndpointSummary,
     WebhookEventResponse,
+    WebhookPruneHistoryEntry,
     WebhookPruneResult,
+    WebhookEndpointUnmuteRequest,
 )
-from clawpass_server.core.utils import add_minutes_iso, json_dumps, parse_iso, stable_id, token_urlsafe, utc_now, utc_now_iso
+from clawpass_server.core.utils import (
+    add_minutes_iso,
+    add_seconds_iso,
+    json_dumps,
+    parse_iso,
+    stable_id,
+    token_urlsafe,
+    utc_now,
+    utc_now_iso,
+)
 from clawpass_server.core.webhooks import WebhookDispatcher
 
 
@@ -613,6 +626,7 @@ class ClawPassService:
         *,
         status: str | None = None,
         event_type: str | None = None,
+        callback_url: str | None = None,
         limit: int = 200,
         cursor: str | None = None,
     ) -> list[WebhookEventResponse]:
@@ -635,6 +649,10 @@ class ClawPassService:
         if event_type:
             clauses.append("event_type = ?")
             params.append(event_type)
+
+        if callback_url:
+            clauses.append("callback_url = ?")
+            params.append(callback_url)
 
         if cursor:
             cursor_row = self._require_webhook_event(cursor)
@@ -728,6 +746,18 @@ class ClawPassService:
             alerts.append(f"{redelivery_counts[WEBHOOK_STATUS_QUEUED]} redelivered webhook event(s) are still queued.")
         if redelivery_counts[WEBHOOK_STATUS_FAILED] > 0:
             alerts.append(f"{redelivery_counts[WEBHOOK_STATUS_FAILED]} redelivered webhook event(s) failed again.")
+        muted_endpoint_count = int(
+            self._db.fetchone(
+                """
+                SELECT COUNT(*) AS count
+                FROM webhook_endpoint_controls
+                WHERE muted_until IS NOT NULL AND muted_until > ?
+                """,
+                (utc_now_iso(),),
+            )["count"]
+        )
+        if muted_endpoint_count > 0:
+            alerts.append(f"{muted_endpoint_count} webhook endpoint(s) are temporarily muted.")
 
         return WebhookDeliverySummary(
             total_events=sum(counts.values()),
@@ -757,6 +787,10 @@ class ClawPassService:
             raise HTTPException(status_code=400, detail="limit must be between 1 and 100.")
 
         now = utc_now()
+        controls = {
+            row["callback_url"]: row
+            for row in self._db.fetchall("SELECT * FROM webhook_endpoint_controls ORDER BY updated_at DESC, callback_url ASC")
+        }
         rows = self._db.fetchall(
             """
             SELECT callback_url, status, available_at, lease_expires_at, dead_lettered_at, last_error, created_at, updated_at
@@ -766,12 +800,32 @@ class ClawPassService:
             """
         )
         grouped: dict[str, dict[str, Any]] = {}
+        for callback_url, control in controls.items():
+            is_muted = bool(control.get("muted_until") and parse_iso(control["muted_until"]) > now)
+            grouped[callback_url] = {
+                "callback_url": callback_url,
+                "muted_until": control["muted_until"] if is_muted else None,
+                "mute_reason": control.get("mute_reason") if is_muted else None,
+                "consecutive_failure_count": int(control.get("consecutive_failure_count") or 0),
+                "total_events": 0,
+                "queued_count": 0,
+                "stalled_count": 0,
+                "delivered_count": 0,
+                "failed_count": 0,
+                "dead_lettered_count": 0,
+                "next_attempt_at": None,
+                "last_event_at": None,
+                "latest_error": None,
+            }
         for row in rows:
             callback_url = row["callback_url"]
             summary = grouped.setdefault(
                 callback_url,
                 {
                     "callback_url": callback_url,
+                    "muted_until": None,
+                    "mute_reason": None,
+                    "consecutive_failure_count": 0,
                     "total_events": 0,
                     "queued_count": 0,
                     "stalled_count": 0,
@@ -815,9 +869,10 @@ class ClawPassService:
         for entry in grouped.values():
             attempted_count = entry["delivered_count"] + entry["failed_count"]
             failure_rate = entry["failed_count"] / attempted_count if attempted_count else 0.0
+            is_muted = bool(entry.get("muted_until") and parse_iso(entry["muted_until"]) > now)
             if entry["dead_lettered_count"] > 0:
                 health_state = "critical"
-            elif entry["stalled_count"] > 0 or failure_rate >= self._settings.webhook_failure_rate_alert_threshold:
+            elif is_muted or entry["stalled_count"] > 0 or failure_rate >= self._settings.webhook_failure_rate_alert_threshold:
                 health_state = "warning"
             elif entry["queued_count"] > 0:
                 health_state = "degraded"
@@ -826,6 +881,9 @@ class ClawPassService:
             endpoint_summaries.append(
                 WebhookEndpointSummary(
                     callback_url=entry["callback_url"],
+                    muted_until=entry["muted_until"] if is_muted else None,
+                    mute_reason=entry["mute_reason"] if is_muted else None,
+                    consecutive_failure_count=entry["consecutive_failure_count"],
                     total_events=entry["total_events"],
                     queued_count=entry["queued_count"],
                     stalled_count=entry["stalled_count"],
@@ -848,6 +906,124 @@ class ClawPassService:
             )
         )
         return endpoint_summaries[:limit]
+
+    def mute_webhook_endpoint(
+        self,
+        payload: WebhookEndpointMuteRequest,
+        *,
+        actor: str = "system",
+    ) -> WebhookEndpointControlResponse:
+        callback_url = payload.callback_url.strip()
+        if not callback_url:
+            raise HTTPException(status_code=400, detail="callback_url is required.")
+        muted_for_seconds = (
+            payload.muted_for_seconds
+            if payload.muted_for_seconds is not None
+            else self._settings.webhook_endpoint_auto_mute_seconds
+        )
+        if muted_for_seconds <= 0:
+            raise HTTPException(status_code=400, detail="muted_for_seconds must be greater than 0.")
+        muted_until = add_seconds_iso(muted_for_seconds)
+        existing = self._get_webhook_endpoint_control(callback_url)
+        control = self._upsert_webhook_endpoint_control(
+            callback_url=callback_url,
+            muted_until=muted_until,
+            mute_reason=payload.reason or f"Operator muted endpoint for {muted_for_seconds}s.",
+            consecutive_failure_count=int(existing.get("consecutive_failure_count") or 0) if existing else 0,
+        )
+        event_ids = [
+            row["id"]
+            for row in self._db.fetchall(
+                "SELECT id FROM webhook_events WHERE status = ? AND callback_url = ?",
+                (WEBHOOK_STATUS_QUEUED, callback_url),
+            )
+        ]
+        for event_id in event_ids:
+            self._webhooks.defer_event_until_mute(event_id)
+        self._audit.log(
+            event_type="webhook.endpoint.muted",
+            resource_type="webhook_endpoint",
+            resource_id=callback_url,
+            actor=actor,
+            payload=control.model_dump(),
+        )
+        return control
+
+    def unmute_webhook_endpoint(
+        self,
+        payload: WebhookEndpointUnmuteRequest,
+        *,
+        actor: str = "system",
+    ) -> WebhookEndpointControlResponse:
+        callback_url = payload.callback_url.strip()
+        if not callback_url:
+            raise HTTPException(status_code=400, detail="callback_url is required.")
+        existing = self._get_webhook_endpoint_control(callback_url)
+        old_muted_until = existing.get("muted_until") if existing else None
+        control = self._upsert_webhook_endpoint_control(
+            callback_url=callback_url,
+            muted_until=None,
+            mute_reason=None,
+            consecutive_failure_count=int(existing.get("consecutive_failure_count") or 0) if existing else 0,
+        )
+        if old_muted_until:
+            releasable_rows = self._db.fetchall(
+                """
+                SELECT id
+                FROM webhook_events
+                WHERE status = ? AND callback_url = ? AND (available_at IS NULL OR available_at <= ?)
+                ORDER BY created_at ASC, id ASC
+                """,
+                (WEBHOOK_STATUS_QUEUED, callback_url, old_muted_until),
+            )
+            now = utc_now_iso()
+            for row in releasable_rows:
+                self._db.execute(
+                    """
+                    UPDATE webhook_events
+                    SET available_at = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, now, row["id"]),
+                )
+                self._webhooks.schedule_existing_event(row["id"])
+        self._audit.log(
+            event_type="webhook.endpoint.unmuted",
+            resource_type="webhook_endpoint",
+            resource_id=callback_url,
+            actor=actor,
+            payload=control.model_dump(),
+        )
+        return control
+
+    def list_webhook_prune_history(self, *, limit: int = 20) -> list[WebhookPruneHistoryEntry]:
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 100.")
+        rows = self._db.fetchall(
+            """
+            SELECT actor, payload_json, created_at
+            FROM audit_events
+            WHERE event_type = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            ("webhook.history.pruned", str(limit)),
+        )
+        history: list[WebhookPruneHistoryEntry] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            history.append(
+                WebhookPruneHistoryEntry(
+                    created_at=row["created_at"],
+                    actor=row.get("actor"),
+                    deleted_delivered_or_skipped=int(payload.get("deleted_delivered_or_skipped") or 0),
+                    deleted_retry_history_events=int(payload.get("deleted_retry_history_events") or 0),
+                    total_deleted=int(payload.get("total_deleted") or 0),
+                    delivered_or_skipped_cutoff=payload.get("delivered_or_skipped_cutoff"),
+                    retry_history_cutoff=payload.get("retry_history_cutoff"),
+                )
+            )
+        return history
 
     def prune_webhook_history(self, *, emit_audit: bool = False, actor: str = "system") -> WebhookPruneResult:
         now = utc_now()
@@ -1015,6 +1191,43 @@ class ClawPassService:
 
     def start_webhook_recovery_loop(self) -> None:
         self._webhooks.start_recovery_loop()
+
+    def _get_webhook_endpoint_control(self, callback_url: str) -> dict[str, Any] | None:
+        return self._db.fetchone(
+            "SELECT * FROM webhook_endpoint_controls WHERE callback_url = ?",
+            (callback_url,),
+        )
+
+    def _upsert_webhook_endpoint_control(
+        self,
+        *,
+        callback_url: str,
+        muted_until: str | None,
+        mute_reason: str | None,
+        consecutive_failure_count: int,
+    ) -> WebhookEndpointControlResponse:
+        now = utc_now_iso()
+        self._db.execute(
+            """
+            INSERT INTO webhook_endpoint_controls(
+              callback_url, muted_until, mute_reason, consecutive_failure_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(callback_url) DO UPDATE SET
+              muted_until = excluded.muted_until,
+              mute_reason = excluded.mute_reason,
+              consecutive_failure_count = excluded.consecutive_failure_count,
+              updated_at = excluded.updated_at
+            """,
+            (callback_url, muted_until, mute_reason, consecutive_failure_count, now),
+        )
+        row = self._get_webhook_endpoint_control(callback_url)
+        return WebhookEndpointControlResponse(
+            callback_url=callback_url,
+            muted_until=row.get("muted_until"),
+            mute_reason=row.get("mute_reason"),
+            consecutive_failure_count=int(row.get("consecutive_failure_count") or 0),
+        )
 
     def _delete_webhook_events(self, event_ids: list[str]) -> int:
         if not event_ids:

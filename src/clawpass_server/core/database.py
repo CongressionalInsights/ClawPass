@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS webhook_endpoint_controls (
+  callback_url TEXT PRIMARY KEY,
+  muted_until TEXT,
+  mute_reason TEXT,
+  consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,
@@ -126,9 +134,6 @@ ON approval_requests(status, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_decision_challenges_request
 ON decision_challenges(request_id, created_at);
-
-CREATE INDEX IF NOT EXISTS idx_webhook_events_status_available_lease_created
-ON webhook_events(status, available_at, lease_expires_at, created_at);
 """
 
 
@@ -146,6 +151,7 @@ class Database:
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
             self._ensure_webhook_event_columns(connection)
+            self._ensure_webhook_endpoint_control_columns(connection)
             connection.commit()
 
     def _ensure_webhook_event_columns(self, connection: sqlite3.Connection) -> None:
@@ -167,6 +173,33 @@ class Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_available_lease_created ON webhook_events(status, available_at, lease_expires_at, created_at)"
         )
+
+    def _ensure_webhook_endpoint_control_columns(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS webhook_endpoint_controls (
+              callback_url TEXT PRIMARY KEY,
+              muted_until TEXT,
+              mute_reason TEXT,
+              consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(webhook_endpoint_controls)").fetchall()
+        }
+        if "muted_until" not in columns:
+            connection.execute("ALTER TABLE webhook_endpoint_controls ADD COLUMN muted_until TEXT")
+        if "mute_reason" not in columns:
+            connection.execute("ALTER TABLE webhook_endpoint_controls ADD COLUMN mute_reason TEXT")
+        if "consecutive_failure_count" not in columns:
+            connection.execute(
+                "ALTER TABLE webhook_endpoint_controls ADD COLUMN consecutive_failure_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "updated_at" not in columns:
+            connection.execute("ALTER TABLE webhook_endpoint_controls ADD COLUMN updated_at TEXT")
 
     def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         with self.connect() as connection:
