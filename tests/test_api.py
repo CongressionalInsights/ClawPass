@@ -30,7 +30,12 @@ def _settings(tmp_path: Path) -> Settings:
         webauthn_timeout_ms=60000,
         challenge_ttl_minutes=10,
         approval_default_ttl_minutes=30,
+        instance_id="api-test-instance",
         webhook_timeout_seconds=1,
+        webhook_delivery_lease_seconds=30,
+        webhook_backlog_alert_threshold=1,
+        webhook_backlog_alert_after_seconds=30,
+        webhook_failure_rate_alert_threshold=0.25,
         webhook_secret=None,
     )
 
@@ -430,6 +435,8 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert summary.status_code == 200
     payload = summary.json()
     assert payload["backlog_count"] == 0
+    assert payload["leased_backlog_count"] == 0
+    assert payload["stalled_backlog_count"] == 0
     assert payload["delivered_count"] == 1
     assert payload["failed_count"] == 1
     assert payload["attempted_count"] == 2
@@ -439,3 +446,6 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert payload["redelivery_delivered_count"] == 1
     assert payload["redelivery_failed_count"] == 0
     assert payload["last_event_at"] is not None
+    assert payload["health_state"] == "warning"
+    assert len(payload["alerts"]) == 1
+    assert "failure rate" in payload["alerts"][0]

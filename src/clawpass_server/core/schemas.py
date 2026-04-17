@@ -128,6 +128,8 @@ class WebhookEventResponse(BaseModel):
 class WebhookDeliverySummary(BaseModel):
     total_events: int
     backlog_count: int
+    leased_backlog_count: int
+    stalled_backlog_count: int
     delivered_count: int
     failed_count: int
     skipped_count: int
@@ -138,7 +140,10 @@ class WebhookDeliverySummary(BaseModel):
     redelivery_delivered_count: int
     redelivery_failed_count: int
     oldest_queued_at: str | None
+    oldest_stalled_at: str | None
     last_event_at: str | None
+    health_state: str
+    alerts: list[str]
 
 
 class ApproverSummary(BaseModel):

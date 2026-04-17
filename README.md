@@ -13,6 +13,7 @@ It supports dual-mode cryptographic approvals:
 - Policy engine with default single-approver model
 - High-risk guard: request cannot be approved if approver has zero non-ledger passkeys
 - Append-only audit events and webhook delivery log
+- Lease-backed webhook recovery and operator health summary
 - Built-in onboarding UI for mobile + desktop passkey creation
 - HTTP API + Python SDK + TypeScript SDK
 

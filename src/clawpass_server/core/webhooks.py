@@ -16,7 +16,7 @@ from clawpass_server.core.constants import (
 )
 from clawpass_server.core.database import Database
 from clawpass_server.core.schemas import WebhookEventResponse
-from clawpass_server.core.utils import json_dumps, stable_id, utc_now_iso
+from clawpass_server.core.utils import add_seconds_iso, json_dumps, stable_id, utc_now_iso
 
 MAX_WEBHOOK_DELIVERY_ATTEMPTS = 2
 RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -69,14 +69,16 @@ class WebhookDispatcher:
         return WebhookEventResponse(**row)
 
     def recover_queued_events(self) -> int:
+        now = utc_now_iso()
         rows = self._db.fetchall(
             """
             SELECT id, event_type, payload_json, callback_url
             FROM webhook_events
             WHERE status = ? AND callback_url IS NOT NULL
+              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
             ORDER BY created_at ASC, id ASC
             """,
-            (WEBHOOK_STATUS_QUEUED,),
+            (WEBHOOK_STATUS_QUEUED, now),
         )
         for row in rows:
             self._schedule_delivery(
@@ -120,6 +122,8 @@ class WebhookDispatcher:
         return headers
 
     def _deliver_event(self, *, event_id: str, event_type: str, payload_json: str, callback_url: str) -> None:
+        if not self._acquire_delivery_lease(event_id):
+            return
         status = WEBHOOK_STATUS_FAILED
         error: str | None = None
         attempts = 0
@@ -141,11 +145,36 @@ class WebhookDispatcher:
                         break
 
         self._db.execute(
-            "UPDATE webhook_events SET status = ?, last_error = ?, attempt_count = ?, updated_at = ? WHERE id = ?",
-            (status, error, attempts, utc_now_iso(), event_id),
+            """
+            UPDATE webhook_events
+            SET status = ?, last_error = ?, attempt_count = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE id = ? AND lease_owner = ?
+            """,
+            (status, error, attempts, utc_now_iso(), event_id, self._settings.instance_id),
         )
 
     def _should_retry(self, exc: Exception) -> bool:
         if isinstance(exc, httpx.HTTPStatusError):
             return exc.response.status_code in RETRYABLE_HTTP_STATUS_CODES
         return isinstance(exc, httpx.TransportError)
+
+    def _acquire_delivery_lease(self, event_id: str) -> bool:
+        now = utc_now_iso()
+        claimed = self._db.execute_rowcount(
+            """
+            UPDATE webhook_events
+            SET lease_owner = ?, lease_expires_at = ?, updated_at = ?
+            WHERE id = ?
+              AND status = ?
+              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+            """,
+            (
+                self._settings.instance_id,
+                add_seconds_iso(self._settings.webhook_delivery_lease_seconds),
+                now,
+                event_id,
+                WEBHOOK_STATUS_QUEUED,
+                now,
+            ),
+        )
+        return claimed == 1

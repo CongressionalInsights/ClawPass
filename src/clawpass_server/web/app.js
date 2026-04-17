@@ -190,6 +190,7 @@ function formatPercent(value) {
 
 async function refreshWebhookSummary() {
   const summary = await api("/v1/webhook-summary");
+  $("webhook-health").textContent = `Health: ${summary.health_state}`;
   const meta = [];
   if (summary.oldest_queued_at) {
     meta.push(`Oldest queued event: ${summary.oldest_queued_at}`);
@@ -198,13 +199,16 @@ async function refreshWebhookSummary() {
     meta.push(`Latest webhook event: ${summary.last_event_at}`);
   }
   $("webhook-summary-meta").textContent = meta.length ? meta.join(" · ") : "No webhook activity yet.";
+  $("webhook-alerts").innerHTML = summary.alerts.length
+    ? summary.alerts.map((message) => `<div class="alert-item warning">${message}</div>`).join("")
+    : '<div class="alert-item ok">No active webhook alerts.</div>';
   $("webhook-stats").innerHTML = [
-    metricCard("Backlog", summary.backlog_count, summary.backlog_count ? "warn" : "normal"),
+    metricCard("Backlog", summary.backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
+    metricCard("Leased backlog", summary.leased_backlog_count),
+    metricCard("Stalled backlog", summary.stalled_backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
     metricCard("Failure rate", formatPercent(summary.failure_rate), summary.failed_count ? "danger" : "normal"),
-    metricCard("Redeliveries", summary.redelivery_count),
     metricCard("Redelivery backlog", summary.redelivery_backlog_count, summary.redelivery_backlog_count ? "warn" : "normal"),
-    metricCard("Delivered", summary.delivered_count),
-    metricCard("Failed", summary.failed_count, summary.failed_count ? "danger" : "normal"),
+    metricCard("Redelivery failures", summary.redelivery_failed_count, summary.redelivery_failed_count ? "danger" : "normal"),
   ].join("");
 }
 

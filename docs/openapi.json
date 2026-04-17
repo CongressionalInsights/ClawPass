@@ -1410,6 +1410,14 @@
             "type": "integer",
             "title": "Backlog Count"
           },
+          "leased_backlog_count": {
+            "type": "integer",
+            "title": "Leased Backlog Count"
+          },
+          "stalled_backlog_count": {
+            "type": "integer",
+            "title": "Stalled Backlog Count"
+          },
           "delivered_count": {
             "type": "integer",
             "title": "Delivered Count"
@@ -1457,6 +1465,17 @@
             ],
             "title": "Oldest Queued At"
           },
+          "oldest_stalled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Stalled At"
+          },
           "last_event_at": {
             "anyOf": [
               {
@@ -1467,12 +1486,25 @@
               }
             ],
             "title": "Last Event At"
+          },
+          "health_state": {
+            "type": "string",
+            "title": "Health State"
+          },
+          "alerts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Alerts"
           }
         },
         "type": "object",
         "required": [
           "total_events",
           "backlog_count",
+          "leased_backlog_count",
+          "stalled_backlog_count",
           "delivered_count",
           "failed_count",
           "skipped_count",
@@ -1483,7 +1515,10 @@
           "redelivery_delivered_count",
           "redelivery_failed_count",
           "oldest_queued_at",
-          "last_event_at"
+          "oldest_stalled_at",
+          "last_event_at",
+          "health_state",
+          "alerts"
         ],
         "title": "WebhookDeliverySummary"
       },

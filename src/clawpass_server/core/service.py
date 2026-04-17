@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import timezone
+from datetime import timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -647,11 +647,29 @@ class ClawPassService:
         return [WebhookEventResponse(**row) for row in rows]
 
     def get_webhook_delivery_summary(self) -> WebhookDeliverySummary:
+        now = utc_now()
         counts = {
             row["status"]: int(row["count"])
             for row in self._db.fetchall("SELECT status, COUNT(*) AS count FROM webhook_events GROUP BY status")
         }
-        backlog_count = counts.get(WEBHOOK_STATUS_QUEUED, 0)
+        queued_rows = self._db.fetchall("SELECT created_at, lease_expires_at FROM webhook_events WHERE status = ?", (WEBHOOK_STATUS_QUEUED,))
+        backlog_count = len(queued_rows)
+        leased_backlog_count = 0
+        stalled_backlog_count = 0
+        oldest_queued_at: str | None = None
+        oldest_stalled_at: str | None = None
+        for row in queued_rows:
+            created_at = row["created_at"]
+            if oldest_queued_at is None or created_at < oldest_queued_at:
+                oldest_queued_at = created_at
+            lease_expires_at = row.get("lease_expires_at")
+            if lease_expires_at and parse_iso(lease_expires_at) > now:
+                leased_backlog_count += 1
+                continue
+            stalled_backlog_count += 1
+            if oldest_stalled_at is None or created_at < oldest_stalled_at:
+                oldest_stalled_at = created_at
+
         delivered_count = counts.get(WEBHOOK_STATUS_DELIVERED, 0)
         failed_count = counts.get(WEBHOOK_STATUS_FAILED, 0)
         skipped_count = counts.get(WEBHOOK_STATUS_SKIPPED, 0)
@@ -685,14 +703,30 @@ class ClawPassService:
                 if status in redelivery_counts:
                     redelivery_counts[status] += 1
 
-        oldest_queued_at = self._db.fetchone(
-            "SELECT MIN(created_at) AS value FROM webhook_events WHERE status = ?",
-            (WEBHOOK_STATUS_QUEUED,),
-        )["value"]
         last_event_at = self._db.fetchone("SELECT MAX(created_at) AS value FROM webhook_events")["value"]
+        alerts: list[str] = []
+        if stalled_backlog_count >= self._settings.webhook_backlog_alert_threshold and oldest_stalled_at:
+            alert_after = timedelta(seconds=self._settings.webhook_backlog_alert_after_seconds)
+            if now - parse_iso(oldest_stalled_at) >= alert_after:
+                alerts.append(
+                    f"Webhook backlog has {stalled_backlog_count} stalled event(s) older than "
+                    f"{self._settings.webhook_backlog_alert_after_seconds}s."
+                )
+        if attempted_count > 0 and failure_rate >= self._settings.webhook_failure_rate_alert_threshold:
+            alerts.append(
+                f"Webhook failure rate is {failure_rate:.0%}, above the "
+                f"{self._settings.webhook_failure_rate_alert_threshold:.0%} threshold."
+            )
+        if redelivery_counts[WEBHOOK_STATUS_QUEUED] > 0:
+            alerts.append(f"{redelivery_counts[WEBHOOK_STATUS_QUEUED]} redelivered webhook event(s) are still queued.")
+        if redelivery_counts[WEBHOOK_STATUS_FAILED] > 0:
+            alerts.append(f"{redelivery_counts[WEBHOOK_STATUS_FAILED]} redelivered webhook event(s) failed again.")
+
         return WebhookDeliverySummary(
             total_events=sum(counts.values()),
             backlog_count=backlog_count,
+            leased_backlog_count=leased_backlog_count,
+            stalled_backlog_count=stalled_backlog_count,
             delivered_count=delivered_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
@@ -703,7 +737,10 @@ class ClawPassService:
             redelivery_delivered_count=redelivery_counts[WEBHOOK_STATUS_DELIVERED],
             redelivery_failed_count=redelivery_counts[WEBHOOK_STATUS_FAILED],
             oldest_queued_at=oldest_queued_at,
+            oldest_stalled_at=oldest_stalled_at,
             last_event_at=last_event_at,
+            health_state="warning" if alerts else "healthy",
+            alerts=alerts,
         )
 
     def redeliver_webhook_event(self, event_id: str) -> WebhookEventResponse:
