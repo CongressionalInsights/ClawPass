@@ -6,7 +6,7 @@ Scope is intentionally limited:
 
 - package/runtime entrypoints in `pyproject.toml`, `Dockerfile`, and `docker-compose.yml`
 - core service and API code in `src/`
-- SDK surfaces in `src/clawpass_sdk_py/`, legacy wrappers in `src/ledgerclaw_sdk_py/`, and `ts-sdk/`
+- SDK surfaces in `src/clawpass_sdk_py/` and `ts-sdk/`
 - repo tests and examples
 - repo-local autoresearch control files and evaluator
 

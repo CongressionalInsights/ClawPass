@@ -26,14 +26,13 @@ dev = [
 
 [project.scripts]
 clawpass-server = "clawpass_server.main:main"
-ledgerclaw-server = "clawpass_server.main:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["clawpass_server*", "clawpass_sdk_py*", "ledgerclaw_server*", "ledgerclaw_sdk_py*"]
+include = ["clawpass_server*", "clawpass_sdk_py*"]
 
 [tool.setuptools.package-data]
 clawpass_server = ["web/*"]

@@ -1,3 +1,3 @@
-from .client import ClawPassClient, LedgerClawClient
+from .client import ClawPassClient
 
-__all__ = ["ClawPassClient", "LedgerClawClient"]
+__all__ = ["ClawPassClient"]

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib
-
-from clawpass_sdk_py.client import ClawPassClient, LedgerClawClient
+from clawpass_sdk_py.client import ClawPassClient
 
 
 class _DummyResponse:
@@ -46,12 +44,3 @@ def test_python_sdk_create_approval_request_forwards_request_id():
     assert fake_client.captured["path"] == "/v1/approval-requests"
     assert fake_client.captured["json"]["request_id"] == "req-fixed-id"
     assert response["id"] == "req-fixed-id"
-
-
-def test_python_sdk_legacy_alias_points_to_clawpass_client():
-    assert LedgerClawClient is ClawPassClient
-
-
-def test_legacy_sdk_package_path_resolves_to_clawpass_client():
-    legacy_module = importlib.import_module("ledgerclaw_sdk_py.client")
-    assert legacy_module.ClawPassClient is ClawPassClient

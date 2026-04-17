@@ -7,8 +7,6 @@ The target is the application and SDK surface that materially changes producer a
 - `docker-compose.yml`
 - `src/clawpass_server/**/*.py`
 - `src/clawpass_sdk_py/**/*.py`
-- `src/ledgerclaw_server/**/*.py`
-- `src/ledgerclaw_sdk_py/**/*.py`
 - `ts-sdk/**/*`
 - `tests/**/*.py`
 - `examples/**/*.py`
