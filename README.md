@@ -63,12 +63,17 @@ clawpass-server
 
 ## Docs
 
+- [Architecture Overview](docs/architecture.md)
+- [Integration Guide](docs/integration-guide.md)
+- [Webhook Operations](docs/webhook-operations.md)
 - [Passkey Guide (mobile + desktop)](docs/passkey-guide.md)
 - [Ledger Setup Guide](docs/ledger-setup.md)
 - [Threat Model](docs/threat-model.md)
 - [Recovery Model](docs/recovery-model.md)
 - [Operator Runbook](docs/operator-runbook.md)
 - [OpenAPI Export](docs/openapi.md)
+- [Contributor Guide](CONTRIBUTING.md)
+- [Agent Guide](AGENTS.md)
 
 ## Example Integrations
 
