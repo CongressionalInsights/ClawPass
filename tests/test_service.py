@@ -219,6 +219,97 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
     assert events[0].last_error == "bad request"
 
 
+def test_list_webhook_events_supports_status_and_event_type_filters(monkeypatch, service):
+    deliveries = {"count": 0}
+
+    class FlakyClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            deliveries["count"] += 1
+            request = httpx.Request("POST", url)
+            if deliveries["count"] == 1:
+                response = httpx.Response(400, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+            return httpx.Response(204, request=request)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:webhook-filter",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+    failed_events = service.list_webhook_events(request.id, status="FAILED", event_type="approval.pending")
+    assert len(failed_events) == 1
+    assert failed_events[0].status == "failed"
+    assert failed_events[0].event_type == "approval.pending"
+
+
+def test_redeliver_failed_webhook_event_creates_new_delivery_record(monkeypatch, service):
+    deliveries = {"count": 0}
+
+    class FlakyClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            deliveries["count"] += 1
+            request = httpx.Request("POST", url)
+            if deliveries["count"] == 1:
+                response = httpx.Response(400, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+            return httpx.Response(204, request=request)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:webhook-redeliver",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+    failed_event = service.list_webhook_events(request.id, status="failed")[0]
+
+    redelivered = service.redeliver_webhook_event(failed_event.id)
+
+    assert redelivered.id != failed_event.id
+    assert redelivered.request_id == request.id
+    assert redelivered.event_type == "approval.pending"
+    assert redelivered.status == "delivered"
+
+
+def test_redeliver_rejects_non_failed_webhook_event(service):
+    request = service.create_approval_request(
+        CreateApprovalRequest(action_type="digest.publish", action_hash="sha256:webhook-skip", risk_level="low")
+    )
+    event = service.list_webhook_events(request.id)[0]
+
+    with pytest.raises(HTTPException) as exc:
+        service.redeliver_webhook_event(event.id)
+
+    assert exc.value.status_code == 400
+    assert "Only failed webhook events" in str(exc.value.detail)
+
+
 def test_duplicate_request_id_returns_conflict(service):
     payload = CreateApprovalRequest(
         request_id="req-fixed-id",

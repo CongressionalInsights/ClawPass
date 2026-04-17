@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -237,3 +238,62 @@ def test_list_approval_requests_status_filter_is_case_insensitive_and_validated(
     invalid = client.get("/v1/approval-requests", params={"status": "unknown"})
     assert invalid.status_code == 400
     assert "Unsupported status" in invalid.json()["detail"]
+
+
+def test_webhook_events_support_filters_and_redelivery(monkeypatch, tmp_path: Path):
+    deliveries = {"count": 0}
+
+    class FlakyClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            deliveries["count"] += 1
+            request = httpx.Request("POST", url)
+            if deliveries["count"] == 1:
+                response = httpx.Response(400, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+            return httpx.Response(204, request=request)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+
+    client = TestClient(create_app(_settings(tmp_path)))
+    created = client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:webhook-api",
+            "risk_level": "low",
+            "callback_url": "https://example.com/webhooks",
+        },
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+
+    failed = client.get(
+        "/v1/webhook-events",
+        params={"request_id": request_id, "status": "FAILED", "event_type": "approval.pending"},
+    )
+    assert failed.status_code == 200
+    failed_events = failed.json()
+    assert len(failed_events) == 1
+    assert failed_events[0]["status"] == "failed"
+
+    redelivered = client.post(f"/v1/webhook-events/{failed_events[0]['id']}/redeliver")
+    assert redelivered.status_code == 200
+    assert redelivered.json()["id"] != failed_events[0]["id"]
+    assert redelivered.json()["status"] == "delivered"
+
+    delivered = client.get(
+        "/v1/webhook-events",
+        params={"request_id": request_id, "status": "delivered", "event_type": "approval.pending"},
+    )
+    assert delivered.status_code == 200
+    delivered_ids = {event["id"] for event in delivered.json()}
+    assert redelivered.json()["id"] in delivered_ids

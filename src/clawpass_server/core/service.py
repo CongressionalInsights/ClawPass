@@ -28,6 +28,8 @@ from clawpass_server.core.constants import (
     METHOD_WEBAUTHN,
     VALID_APPROVAL_STATUSES,
     VALID_RISK_LEVELS,
+    VALID_WEBHOOK_EVENT_STATUSES,
+    WEBHOOK_STATUS_FAILED,
 )
 from clawpass_server.core.database import Database
 from clawpass_server.core.policy import PolicyEngine
@@ -599,15 +601,64 @@ class ClawPassService:
             ethereum_signer_count=int(ethereum_signer_count),
         )
 
-    def list_webhook_events(self, request_id: str | None = None) -> list[WebhookEventResponse]:
+    def list_webhook_events(
+        self,
+        request_id: str | None = None,
+        *,
+        status: str | None = None,
+        event_type: str | None = None,
+    ) -> list[WebhookEventResponse]:
+        clauses: list[str] = []
+        params: list[str] = []
+
         if request_id:
-            rows = self._db.fetchall(
-                "SELECT * FROM webhook_events WHERE request_id = ? ORDER BY created_at DESC",
-                (request_id,),
-            )
-        else:
-            rows = self._db.fetchall("SELECT * FROM webhook_events ORDER BY created_at DESC LIMIT 200")
+            clauses.append("request_id = ?")
+            params.append(request_id)
+
+        if status:
+            normalized_status = status.lower()
+            if normalized_status not in VALID_WEBHOOK_EVENT_STATUSES:
+                raise HTTPException(status_code=400, detail=f"Unsupported webhook status '{status}'.")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+
+        query = "SELECT * FROM webhook_events"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT 200"
+        rows = self._db.fetchall(query, tuple(params))
         return [WebhookEventResponse(**row) for row in rows]
+
+    def redeliver_webhook_event(self, event_id: str) -> WebhookEventResponse:
+        row = self._require_webhook_event(event_id)
+        if row["status"] != WEBHOOK_STATUS_FAILED:
+            raise HTTPException(status_code=400, detail="Only failed webhook events can be redelivered.")
+        if not row.get("callback_url"):
+            raise HTTPException(status_code=400, detail="Webhook event has no callback URL to redeliver.")
+        redelivered = self._webhooks.dispatch(
+            request_id=row["request_id"],
+            event_type=row["event_type"],
+            payload=json.loads(row["payload_json"]),
+            callback_url=row["callback_url"],
+        )
+        self._audit.log(
+            event_type="webhook.event.redelivered",
+            resource_type="webhook_event",
+            resource_id=event_id,
+            actor="system",
+            payload={"redelivery_event_id": redelivered.id, "request_id": row["request_id"]},
+        )
+        return redelivered
+
+    def _require_webhook_event(self, event_id: str) -> dict[str, Any]:
+        row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Webhook event not found.")
+        return row
 
     def list_approval_requests(self, *, status: str | None = None) -> list[ApprovalRequestResponse]:
         self._expire_pending_requests()
