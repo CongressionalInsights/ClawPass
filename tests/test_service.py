@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from datetime import timedelta
 
 import pytest
@@ -18,11 +17,6 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterStartRequest,
 )
 from clawpass_server.core.utils import utc_now
-
-
-def test_legacy_server_package_path_resolves_to_clawpass_service():
-    legacy_module = importlib.import_module("ledgerclaw_server.core.service")
-    assert legacy_module.ClawPassService is legacy_module.LedgerClawService
 
 
 def _enroll_passkey(service, *, email: str, is_ledger: bool = False) -> str:

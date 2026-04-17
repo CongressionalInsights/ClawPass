@@ -743,6 +743,3 @@ class ClawPassService:
             decided_at=row.get("decided_at"),
             callback_url=row.get("callback_url"),
         )
-
-
-LedgerClawService = ClawPassService
