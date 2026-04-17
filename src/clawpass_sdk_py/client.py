@@ -73,6 +73,8 @@ class ClawPassClient:
         request_id: str | None = None,
         status: str | None = None,
         event_type: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> list[dict[str, Any]]:
         params = {
             key: value
@@ -80,6 +82,8 @@ class ClawPassClient:
                 "request_id": request_id,
                 "status": status,
                 "event_type": event_type,
+                "limit": limit,
+                "cursor": cursor,
             }.items()
             if value is not None
         } or None

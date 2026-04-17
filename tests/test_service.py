@@ -163,6 +163,7 @@ def test_webhook_delivery_retries_once_on_transient_failure(monkeypatch, service
             return httpx.Response(204, request=httpx.Request("POST", url))
 
     monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RetryingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
 
     request = service.create_approval_request(
         CreateApprovalRequest(
@@ -201,6 +202,7 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
             raise httpx.HTTPStatusError("bad request", request=request, response=response)
 
     monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
 
     request = service.create_approval_request(
         CreateApprovalRequest(
@@ -219,7 +221,7 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
     assert events[0].last_error == "bad request"
 
 
-def test_list_webhook_events_supports_status_and_event_type_filters(monkeypatch, service):
+def test_list_webhook_events_supports_status_event_type_and_cursor(monkeypatch, service):
     deliveries = {"count": 0}
 
     class FlakyClient:
@@ -241,6 +243,7 @@ def test_list_webhook_events_supports_status_and_event_type_filters(monkeypatch,
             return httpx.Response(204, request=request)
 
     monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
 
     request = service.create_approval_request(
         CreateApprovalRequest(
@@ -250,10 +253,23 @@ def test_list_webhook_events_supports_status_and_event_type_filters(monkeypatch,
             callback_url="https://example.com/webhooks",
         )
     )
+    service.cancel_approval_request(request.id, reason="operator cancelled")
+
+    second = service.create_approval_request(
+        CreateApprovalRequest(action_type="digest.publish", action_hash="sha256:webhook-filter-2", risk_level="low")
+    )
+    service.cancel_approval_request(second.id, reason="operator cancelled")
+
     failed_events = service.list_webhook_events(request.id, status="FAILED", event_type="approval.pending")
     assert len(failed_events) == 1
     assert failed_events[0].status == "failed"
     assert failed_events[0].event_type == "approval.pending"
+
+    first_page = service.list_webhook_events(status="skipped", limit=1)
+    assert len(first_page) == 1
+    second_page = service.list_webhook_events(status="skipped", limit=10, cursor=first_page[0].id)
+    second_page_ids = {event.id for event in second_page}
+    assert first_page[0].id not in second_page_ids
 
 
 def test_redeliver_failed_webhook_event_creates_new_delivery_record(monkeypatch, service):
@@ -278,6 +294,7 @@ def test_redeliver_failed_webhook_event_creates_new_delivery_record(monkeypatch,
             return httpx.Response(204, request=request)
 
     monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
 
     request = service.create_approval_request(
         CreateApprovalRequest(
@@ -294,7 +311,11 @@ def test_redeliver_failed_webhook_event_creates_new_delivery_record(monkeypatch,
     assert redelivered.id != failed_event.id
     assert redelivered.request_id == request.id
     assert redelivered.event_type == "approval.pending"
-    assert redelivered.status == "delivered"
+    assert redelivered.status == "queued"
+
+    delivered_events = service.list_webhook_events(request.id, status="delivered", event_type="approval.pending")
+    delivered_ids = {event.id for event in delivered_events}
+    assert redelivered.id in delivered_ids
 
 
 def test_redeliver_rejects_non_failed_webhook_event(service):

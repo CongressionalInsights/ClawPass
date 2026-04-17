@@ -118,9 +118,13 @@ async function main(): Promise<void> {
       throw new Error(`unexpected cancel response: ${JSON.stringify(cancelled)}`);
     }
 
-    const events = await client.listWebhookEvents(created.id);
-    const eventTypes = new Set(events.map((event) => event.event_type));
-    if (!eventTypes.has("approval.pending") || !eventTypes.has("approval.cancelled")) {
+    const events = await client.listWebhookEvents({
+      requestId: created.id,
+      status: "skipped",
+      eventType: "approval.cancelled",
+      limit: 10,
+    });
+    if (!events.length || events[0].event_type !== "approval.cancelled") {
       throw new Error(`unexpected webhook events: ${JSON.stringify(events)}`);
     }
 

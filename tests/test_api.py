@@ -262,6 +262,7 @@ def test_webhook_events_support_filters_and_redelivery(monkeypatch, tmp_path: Pa
             return httpx.Response(204, request=request)
 
     monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
 
     client = TestClient(create_app(_settings(tmp_path)))
     created = client.post(
@@ -288,7 +289,7 @@ def test_webhook_events_support_filters_and_redelivery(monkeypatch, tmp_path: Pa
     redelivered = client.post(f"/v1/webhook-events/{failed_events[0]['id']}/redeliver")
     assert redelivered.status_code == 200
     assert redelivered.json()["id"] != failed_events[0]["id"]
-    assert redelivered.json()["status"] == "delivered"
+    assert redelivered.json()["status"] == "queued"
 
     delivered = client.get(
         "/v1/webhook-events",
@@ -297,3 +298,31 @@ def test_webhook_events_support_filters_and_redelivery(monkeypatch, tmp_path: Pa
     assert delivered.status_code == 200
     delivered_ids = {event["id"] for event in delivered.json()}
     assert redelivered.json()["id"] in delivered_ids
+
+
+def test_webhook_events_support_limit_and_cursor(tmp_path: Path):
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    first = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:first", "risk_level": "low"},
+    )
+    second = client.post(
+        "/v1/approval-requests",
+        json={"action_type": "digest.publish", "action_hash": "sha256:second", "risk_level": "low"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    page_one = client.get("/v1/webhook-events", params={"status": "skipped", "limit": 1})
+    assert page_one.status_code == 200
+    page_one_payload = page_one.json()
+    assert len(page_one_payload) == 1
+
+    page_two = client.get(
+        "/v1/webhook-events",
+        params={"status": "skipped", "limit": 10, "cursor": page_one_payload[0]["id"]},
+    )
+    assert page_two.status_code == 200
+    page_two_ids = {event["id"] for event in page_two.json()}
+    assert page_one_payload[0]["id"] not in page_two_ids
