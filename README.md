@@ -43,10 +43,14 @@ clawpass-server
 - `POST /v1/webauthn/register/start`
 - `POST /v1/webauthn/register/complete`
 - `POST /v1/approval-requests`
+- `GET /v1/approval-requests`
+- `POST /v1/approval-requests/{id}/cancel`
 - `POST /v1/approval-requests/{id}/decision/start`
 - `POST /v1/approval-requests/{id}/decision/complete`
 - `POST /v1/signers/ethereum/challenge`
 - `POST /v1/signers/ethereum/verify`
+- `GET /v1/approvers/{approver_id}/summary`
+- `GET /v1/webhook-events`
 
 ## Docs
 

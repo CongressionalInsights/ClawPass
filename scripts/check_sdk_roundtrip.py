@@ -18,8 +18,8 @@ class _TestClientAdapter:
     def post(self, path: str, json: dict):
         return self._client.post(path, json=json)
 
-    def get(self, path: str):
-        return self._client.get(path)
+    def get(self, path: str, params: dict | None = None):
+        return self._client.get(path, params=params)
 
     def close(self) -> None:
         self._client.close()
@@ -59,8 +59,21 @@ def main() -> int:
             if created["id"] != "sdk-roundtrip" or created["status"] != "PENDING":
                 raise RuntimeError(f"Unexpected create response: {created}")
 
+            pending = client.list_approval_requests(status="pending")
+            if created["id"] not in {request["id"] for request in pending}:
+                raise RuntimeError(f"Created request missing from pending list: {pending}")
+
+            cancelled = client.cancel_approval_request(created["id"], reason="sdk roundtrip cleanup")
+            if cancelled["id"] != created["id"] or cancelled["status"] != "CANCELLED":
+                raise RuntimeError(f"Unexpected cancel response: {cancelled}")
+
+            events = client.list_webhook_events(request_id=created["id"])
+            event_types = {event["event_type"] for event in events}
+            if {"approval.pending", "approval.cancelled"} - event_types:
+                raise RuntimeError(f"Unexpected webhook events: {events}")
+
             fetched = client.get_approval_request(created["id"])
-            if fetched["id"] != created["id"] or fetched["status"] != "PENDING":
+            if fetched["id"] != created["id"] or fetched["status"] != "CANCELLED":
                 raise RuntimeError(f"Unexpected fetch response: {fetched}")
         finally:
             client.close()
