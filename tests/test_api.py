@@ -326,3 +326,116 @@ def test_webhook_events_support_limit_and_cursor(tmp_path: Path):
     assert page_two.status_code == 200
     page_two_ids = {event["id"] for event in page_two.json()}
     assert page_one_payload[0]["id"] not in page_two_ids
+
+
+def test_app_startup_recovers_queued_webhooks(monkeypatch, tmp_path: Path):
+    settings = _settings(tmp_path)
+    captured_headers: list[dict[str, str]] = []
+
+    class RecordingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            captured_headers.append(headers)
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
+
+    first_client = TestClient(create_app(settings))
+    created = first_client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:recover-startup",
+            "risk_level": "low",
+            "callback_url": "https://example.com/webhooks",
+        },
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+
+    queued = first_client.get("/v1/webhook-events", params={"request_id": request_id, "status": "queued"})
+    assert queued.status_code == 200
+    queued_event = queued.json()[0]
+    first_client.close()
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
+    second_client = TestClient(create_app(settings))
+    recovered = second_client.get("/v1/webhook-events", params={"request_id": request_id})
+    assert recovered.status_code == 200
+    recovered_event = recovered.json()[0]
+    second_client.close()
+
+    assert recovered_event["status"] == "delivered"
+    assert recovered_event["attempt_count"] == 1
+    assert captured_headers[0]["X-ClawPass-Webhook-Id"] == queued_event["id"]
+    assert captured_headers[0]["X-LedgerClaw-Webhook-Id"] == queued_event["id"]
+
+
+def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatch, tmp_path: Path):
+    deliveries = {"count": 0}
+
+    class FlakyClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            deliveries["count"] += 1
+            request = httpx.Request("POST", url)
+            if deliveries["count"] == 1:
+                response = httpx.Response(400, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+            return httpx.Response(204, request=request)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
+
+    client = TestClient(create_app(_settings(tmp_path)))
+    created = client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:webhook-summary-api",
+            "risk_level": "low",
+            "callback_url": "https://example.com/webhooks",
+        },
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+    failed_event = client.get(
+        "/v1/webhook-events",
+        params={"request_id": request_id, "status": "failed", "event_type": "approval.pending"},
+    )
+    assert failed_event.status_code == 200
+    failed_event_id = failed_event.json()[0]["id"]
+
+    redelivered = client.post(f"/v1/webhook-events/{failed_event_id}/redeliver")
+    assert redelivered.status_code == 200
+
+    summary = client.get("/v1/webhook-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["backlog_count"] == 0
+    assert payload["delivered_count"] == 1
+    assert payload["failed_count"] == 1
+    assert payload["attempted_count"] == 2
+    assert payload["failure_rate"] == 0.5
+    assert payload["redelivery_count"] == 1
+    assert payload["redelivery_backlog_count"] == 0
+    assert payload["redelivery_delivered_count"] == 1
+    assert payload["redelivery_failed_count"] == 0
+    assert payload["last_event_at"] is not None

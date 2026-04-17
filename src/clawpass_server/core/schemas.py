@@ -125,6 +125,22 @@ class WebhookEventResponse(BaseModel):
     updated_at: str
 
 
+class WebhookDeliverySummary(BaseModel):
+    total_events: int
+    backlog_count: int
+    delivered_count: int
+    failed_count: int
+    skipped_count: int
+    attempted_count: int
+    failure_rate: float
+    redelivery_count: int
+    redelivery_backlog_count: int
+    redelivery_delivered_count: int
+    redelivery_failed_count: int
+    oldest_queued_at: str | None
+    last_event_at: str | None
+
+
 class ApproverSummary(BaseModel):
     id: str
     email: str

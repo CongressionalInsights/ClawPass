@@ -91,6 +91,11 @@ class ClawPassClient:
         response.raise_for_status()
         return response.json()
 
+    def get_webhook_summary(self) -> dict[str, Any]:
+        response = self._client.get("/v1/webhook-summary")
+        response.raise_for_status()
+        return response.json()
+
     def redeliver_webhook_event(self, event_id: str) -> dict[str, Any]:
         response = self._client.post(f"/v1/webhook-events/{event_id}/redeliver", json={})
         response.raise_for_status()

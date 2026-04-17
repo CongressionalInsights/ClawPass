@@ -60,23 +60,52 @@ class WebhookDispatcher:
         )
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
         if callback_url:
-            self._launch_delivery_task(
-                lambda: self._deliver_event(
-                    event_id=event_id,
-                    event_type=event_type,
-                    payload_json=payload_json,
-                    callback_url=callback_url,
-                )
+            self._schedule_delivery(
+                event_id=event_id,
+                event_type=event_type,
+                payload_json=payload_json,
+                callback_url=callback_url,
             )
         return WebhookEventResponse(**row)
+
+    def recover_queued_events(self) -> int:
+        rows = self._db.fetchall(
+            """
+            SELECT id, event_type, payload_json, callback_url
+            FROM webhook_events
+            WHERE status = ? AND callback_url IS NOT NULL
+            ORDER BY created_at ASC, id ASC
+            """,
+            (WEBHOOK_STATUS_QUEUED,),
+        )
+        for row in rows:
+            self._schedule_delivery(
+                event_id=row["id"],
+                event_type=row["event_type"],
+                payload_json=row["payload_json"],
+                callback_url=row["callback_url"],
+            )
+        return len(rows)
 
     def _launch_delivery_task(self, task) -> None:
         thread = threading.Thread(target=task, daemon=True, name="clawpass-webhook-delivery")
         thread.start()
 
-    def _delivery_headers(self, *, event_type: str, payload_json: str) -> dict[str, str]:
+    def _schedule_delivery(self, *, event_id: str, event_type: str, payload_json: str, callback_url: str) -> None:
+        self._launch_delivery_task(
+            lambda: self._deliver_event(
+                event_id=event_id,
+                event_type=event_type,
+                payload_json=payload_json,
+                callback_url=callback_url,
+            )
+        )
+
+    def _delivery_headers(self, *, event_id: str, event_type: str, payload_json: str) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
+            "X-ClawPass-Webhook-Id": event_id,
+            "X-LedgerClaw-Webhook-Id": event_id,
             "X-ClawPass-Event": event_type,
             "X-LedgerClaw-Event": event_type,
         }
@@ -94,7 +123,7 @@ class WebhookDispatcher:
         status = WEBHOOK_STATUS_FAILED
         error: str | None = None
         attempts = 0
-        headers = self._delivery_headers(event_type=event_type, payload_json=payload_json)
+        headers = self._delivery_headers(event_id=event_id, event_type=event_type, payload_json=payload_json)
 
         with httpx.Client(timeout=self._settings.webhook_timeout_seconds) as client:
             for attempt in range(1, MAX_WEBHOOK_DELIVERY_ATTEMPTS + 1):

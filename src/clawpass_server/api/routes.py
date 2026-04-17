@@ -19,6 +19,7 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterStartRequest,
     WebAuthnRegisterStartResponse,
+    WebhookDeliverySummary,
     WebhookEventResponse,
 )
 from clawpass_server.core.service import ClawPassService
@@ -109,6 +110,10 @@ def get_router(get_service: callable) -> APIRouter:
             limit=limit,
             cursor=cursor,
         )
+
+    @router.get("/webhook-summary", response_model=WebhookDeliverySummary)
+    def webhook_summary(svc: ClawPassService = Depends(service)) -> WebhookDeliverySummary:
+        return svc.get_webhook_delivery_summary()
 
     @router.post("/webhook-events/{event_id}/redeliver", response_model=WebhookEventResponse)
     def redeliver_webhook_event(event_id: str, svc: ClawPassService = Depends(service)) -> WebhookEventResponse:

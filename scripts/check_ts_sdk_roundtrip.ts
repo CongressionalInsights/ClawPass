@@ -128,6 +128,11 @@ async function main(): Promise<void> {
       throw new Error(`unexpected webhook events: ${JSON.stringify(events)}`);
     }
 
+    const summary = await client.getWebhookSummary();
+    if (summary.backlog_count !== 0 || summary.redelivery_count !== 0) {
+      throw new Error(`unexpected webhook summary: ${JSON.stringify(summary)}`);
+    }
+
     const fetched = await client.getApprovalRequest(created.id);
     if (fetched.id !== created.id || fetched.status !== "CANCELLED") {
       throw new Error(`unexpected fetch response: ${JSON.stringify(fetched)}`);

@@ -175,6 +175,39 @@ async function refreshSummary() {
   $("summary").textContent = `Approver ${summary.email}: ${summary.passkey_count} passkeys, ${summary.ledger_webauthn_count} Ledger security keys, ${summary.ethereum_signer_count} Ethereum signer(s).`;
 }
 
+function metricCard(label, value, tone = "normal") {
+  return `
+    <div class="metric-card">
+      <div class="metric-label">${label}</div>
+      <div class="metric-value ${tone}">${value}</div>
+    </div>
+  `;
+}
+
+function formatPercent(value) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+async function refreshWebhookSummary() {
+  const summary = await api("/v1/webhook-summary");
+  const meta = [];
+  if (summary.oldest_queued_at) {
+    meta.push(`Oldest queued event: ${summary.oldest_queued_at}`);
+  }
+  if (summary.last_event_at) {
+    meta.push(`Latest webhook event: ${summary.last_event_at}`);
+  }
+  $("webhook-summary-meta").textContent = meta.length ? meta.join(" · ") : "No webhook activity yet.";
+  $("webhook-stats").innerHTML = [
+    metricCard("Backlog", summary.backlog_count, summary.backlog_count ? "warn" : "normal"),
+    metricCard("Failure rate", formatPercent(summary.failure_rate), summary.failed_count ? "danger" : "normal"),
+    metricCard("Redeliveries", summary.redelivery_count),
+    metricCard("Redelivery backlog", summary.redelivery_backlog_count, summary.redelivery_backlog_count ? "warn" : "normal"),
+    metricCard("Delivered", summary.delivered_count),
+    metricCard("Failed", summary.failed_count, summary.failed_count ? "danger" : "normal"),
+  ].join("");
+}
+
 async function createRequest() {
   const req = await api("/v1/approval-requests", {
     method: "POST",
@@ -189,6 +222,7 @@ async function createRequest() {
   });
   log("Approval request created.", req);
   await refreshRequests();
+  await refreshWebhookSummary();
 }
 
 async function startAndComplete(requestId, decision, method) {
@@ -222,6 +256,7 @@ async function startAndComplete(requestId, decision, method) {
     log("Decision completed via ethereum_signer.", done);
   }
   await refreshRequests();
+  await refreshWebhookSummary();
 }
 
 function renderRequestCard(request) {
@@ -332,7 +367,7 @@ function bindButtons() {
 
   $("btn-refresh").onclick = async () => {
     try {
-      await refreshRequests();
+      await Promise.all([refreshRequests(), refreshWebhookSummary()]);
       setStatus("Ready");
     } catch (error) {
       log("Refresh failed", { error: String(error) });
@@ -361,12 +396,23 @@ function bindButtons() {
       setStatus("Error");
     }
   };
+
+  $("btn-refresh-webhooks").onclick = async () => {
+    try {
+      await refreshWebhookSummary();
+      setStatus("Ready");
+    } catch (error) {
+      log("Webhook summary load failed", { error: String(error) });
+      alert(String(error));
+      setStatus("Error");
+    }
+  };
 }
 
 async function init() {
   updateDeviceHint();
   bindButtons();
-  await refreshRequests().catch(() => null);
+  await Promise.all([refreshRequests(), refreshWebhookSummary()]).catch(() => null);
   setStatus("Ready");
 }
 

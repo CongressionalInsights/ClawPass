@@ -32,6 +32,8 @@ class _FakeHttpClient:
         self.calls.append(("get", path, params))
         if path == "/v1/approval-requests":
             return _DummyResponse([{"id": "req-pending", "status": "PENDING"}])
+        if path == "/v1/webhook-summary":
+            return _DummyResponse({"backlog_count": 1, "failure_rate": 0.5, "redelivery_count": 1})
         if path == "/v1/webhook-events":
             return _DummyResponse(
                 [
@@ -158,3 +160,18 @@ def test_python_sdk_redeliver_webhook_event_forwards_event_id():
     assert fake_client.calls[0] == ("post", "/v1/webhook-events/whevt-failed/redeliver", {})
     assert response["id"] == "whevt-redelivered"
     assert response["status"] == "queued"
+
+
+def test_python_sdk_get_webhook_summary_uses_summary_endpoint():
+    client = ClawPassClient("http://localhost:8081")
+    fake_client = _FakeHttpClient()
+    client._client = fake_client
+    try:
+        response = client.get_webhook_summary()
+    finally:
+        client.close()
+
+    assert fake_client.calls[0] == ("get", "/v1/webhook-summary", None)
+    assert response["backlog_count"] == 1
+    assert response["failure_rate"] == 0.5
+    assert response["redelivery_count"] == 1

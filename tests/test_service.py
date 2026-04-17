@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import pytest
@@ -219,6 +220,79 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
     assert events[0].status == "failed"
     assert events[0].attempt_count == 1
     assert events[0].last_error == "bad request"
+
+
+def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(monkeypatch, service):
+    queued_at = utc_now().isoformat().replace("+00:00", "Z")
+    service._db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-backlog",
+            "req-backlog",
+            "approval.pending",
+            json.dumps({"request_id": "req-backlog"}),
+            "https://example.com/webhooks",
+            "queued",
+            None,
+            0,
+            queued_at,
+            queued_at,
+        ),
+    )
+
+    deliveries = {"count": 0}
+
+    class FlakyClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            deliveries["count"] += 1
+            request = httpx.Request("POST", url)
+            if deliveries["count"] == 1:
+                response = httpx.Response(400, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+            return httpx.Response(204, request=request)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:webhook-summary",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+    failed_event = service.list_webhook_events(request.id, status="failed")[0]
+    service.redeliver_webhook_event(failed_event.id)
+
+    summary = service.get_webhook_delivery_summary()
+    assert summary.total_events == 3
+    assert summary.backlog_count == 1
+    assert summary.delivered_count == 1
+    assert summary.failed_count == 1
+    assert summary.skipped_count == 0
+    assert summary.attempted_count == 2
+    assert summary.failure_rate == 0.5
+    assert summary.redelivery_count == 1
+    assert summary.redelivery_backlog_count == 0
+    assert summary.redelivery_delivered_count == 1
+    assert summary.redelivery_failed_count == 0
+    assert summary.oldest_queued_at == queued_at
+    assert summary.last_event_at is not None
 
 
 def test_list_webhook_events_supports_status_event_type_and_cursor(monkeypatch, service):

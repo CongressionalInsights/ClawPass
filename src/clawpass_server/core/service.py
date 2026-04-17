@@ -29,7 +29,10 @@ from clawpass_server.core.constants import (
     VALID_APPROVAL_STATUSES,
     VALID_RISK_LEVELS,
     VALID_WEBHOOK_EVENT_STATUSES,
+    WEBHOOK_STATUS_DELIVERED,
     WEBHOOK_STATUS_FAILED,
+    WEBHOOK_STATUS_QUEUED,
+    WEBHOOK_STATUS_SKIPPED,
 )
 from clawpass_server.core.database import Database
 from clawpass_server.core.policy import PolicyEngine
@@ -49,6 +52,7 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterStartRequest,
     WebAuthnRegisterStartResponse,
+    WebhookDeliverySummary,
     WebhookEventResponse,
 )
 from clawpass_server.core.utils import add_minutes_iso, json_dumps, parse_iso, stable_id, token_urlsafe, utc_now, utc_now_iso
@@ -642,6 +646,66 @@ class ClawPassService:
         rows = self._db.fetchall(query, tuple(params + [str(limit)]))
         return [WebhookEventResponse(**row) for row in rows]
 
+    def get_webhook_delivery_summary(self) -> WebhookDeliverySummary:
+        counts = {
+            row["status"]: int(row["count"])
+            for row in self._db.fetchall("SELECT status, COUNT(*) AS count FROM webhook_events GROUP BY status")
+        }
+        backlog_count = counts.get(WEBHOOK_STATUS_QUEUED, 0)
+        delivered_count = counts.get(WEBHOOK_STATUS_DELIVERED, 0)
+        failed_count = counts.get(WEBHOOK_STATUS_FAILED, 0)
+        skipped_count = counts.get(WEBHOOK_STATUS_SKIPPED, 0)
+        attempted_count = delivered_count + failed_count
+        failure_rate = failed_count / attempted_count if attempted_count else 0.0
+
+        redelivery_ids: list[str] = []
+        redelivery_rows = self._db.fetchall(
+            "SELECT payload_json FROM audit_events WHERE event_type = ? ORDER BY created_at DESC",
+            ("webhook.event.redelivered",),
+        )
+        for row in redelivery_rows:
+            payload = json.loads(row["payload_json"])
+            redelivery_event_id = payload.get("redelivery_event_id")
+            if redelivery_event_id:
+                redelivery_ids.append(redelivery_event_id)
+
+        redelivery_counts = {
+            WEBHOOK_STATUS_QUEUED: 0,
+            WEBHOOK_STATUS_DELIVERED: 0,
+            WEBHOOK_STATUS_FAILED: 0,
+        }
+        if redelivery_ids:
+            placeholders = ",".join("?" for _ in redelivery_ids)
+            rows = self._db.fetchall(
+                f"SELECT status FROM webhook_events WHERE id IN ({placeholders})",
+                tuple(redelivery_ids),
+            )
+            for row in rows:
+                status = row["status"]
+                if status in redelivery_counts:
+                    redelivery_counts[status] += 1
+
+        oldest_queued_at = self._db.fetchone(
+            "SELECT MIN(created_at) AS value FROM webhook_events WHERE status = ?",
+            (WEBHOOK_STATUS_QUEUED,),
+        )["value"]
+        last_event_at = self._db.fetchone("SELECT MAX(created_at) AS value FROM webhook_events")["value"]
+        return WebhookDeliverySummary(
+            total_events=sum(counts.values()),
+            backlog_count=backlog_count,
+            delivered_count=delivered_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            attempted_count=attempted_count,
+            failure_rate=failure_rate,
+            redelivery_count=len(redelivery_ids),
+            redelivery_backlog_count=redelivery_counts[WEBHOOK_STATUS_QUEUED],
+            redelivery_delivered_count=redelivery_counts[WEBHOOK_STATUS_DELIVERED],
+            redelivery_failed_count=redelivery_counts[WEBHOOK_STATUS_FAILED],
+            oldest_queued_at=oldest_queued_at,
+            last_event_at=last_event_at,
+        )
+
     def redeliver_webhook_event(self, event_id: str) -> WebhookEventResponse:
         row = self._require_webhook_event(event_id)
         if row["status"] != WEBHOOK_STATUS_FAILED:
@@ -662,6 +726,9 @@ class ClawPassService:
             payload={"redelivery_event_id": redelivered.id, "request_id": row["request_id"]},
         )
         return redelivered
+
+    def recover_queued_webhook_events(self) -> int:
+        return self._webhooks.recover_queued_events()
 
     def _require_webhook_event(self, event_id: str) -> dict[str, Any]:
         row = self._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", (event_id,))
