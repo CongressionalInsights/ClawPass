@@ -36,6 +36,8 @@ def _settings(tmp_path: Path) -> Settings:
         webhook_retry_poll_seconds=0,
         webhook_auto_retry_limit=2,
         webhook_auto_retry_base_delay_seconds=30,
+        webhook_auto_retry_max_delay_seconds=300,
+        webhook_auto_retry_jitter_seconds=10,
         webhook_backlog_alert_threshold=1,
         webhook_backlog_alert_after_seconds=30,
         webhook_failure_rate_alert_threshold=0.25,
@@ -441,6 +443,7 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert payload["leased_backlog_count"] == 0
     assert payload["stalled_backlog_count"] == 0
     assert payload["scheduled_retry_count"] == 0
+    assert payload["dead_lettered_count"] == 0
     assert payload["delivered_count"] == 1
     assert payload["failed_count"] == 1
     assert payload["attempted_count"] == 2
@@ -453,6 +456,56 @@ def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatc
     assert payload["health_state"] == "warning"
     assert len(payload["alerts"]) == 1
     assert "failure rate" in payload["alerts"][0]
+
+
+def test_webhook_summary_reports_dead_lettered_failures(monkeypatch, tmp_path: Path):
+    settings = _settings(tmp_path)
+    settings.webhook_auto_retry_limit = 0
+    settings.webhook_auto_retry_base_delay_seconds = 0
+    settings.webhook_auto_retry_max_delay_seconds = 0
+    settings.webhook_auto_retry_jitter_seconds = 0
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            request = httpx.Request("POST", url)
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
+
+    client = TestClient(create_app(settings))
+    created = client.post(
+        "/v1/approval-requests",
+        json={
+            "action_type": "digest.publish",
+            "action_hash": "sha256:webhook-dead-letter-api",
+            "risk_level": "low",
+            "callback_url": "https://example.com/webhooks",
+        },
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+
+    failed = client.get("/v1/webhook-events", params={"request_id": request_id, "status": "failed"})
+    assert failed.status_code == 200
+    assert failed.json()[0]["dead_lettered_at"] is not None
+    assert "retry budget exhausted" in failed.json()[0]["dead_letter_reason"]
+
+    summary = client.get("/v1/webhook-summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["dead_lettered_count"] == 1
+    assert any("dead-lettered" in alert for alert in payload["alerts"])
 
 
 def test_retry_now_endpoint_requeues_stalled_webhook(monkeypatch, tmp_path: Path):

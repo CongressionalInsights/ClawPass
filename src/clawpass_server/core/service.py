@@ -683,6 +683,9 @@ class ClawPassService:
         delivered_count = counts.get(WEBHOOK_STATUS_DELIVERED, 0)
         failed_count = counts.get(WEBHOOK_STATUS_FAILED, 0)
         skipped_count = counts.get(WEBHOOK_STATUS_SKIPPED, 0)
+        dead_lettered_count = int(
+            self._db.fetchone("SELECT COUNT(*) AS count FROM webhook_events WHERE dead_lettered_at IS NOT NULL")["count"]
+        )
         attempted_count = delivered_count + failed_count
         failure_rate = failed_count / attempted_count if attempted_count else 0.0
 
@@ -717,6 +720,8 @@ class ClawPassService:
                 f"Webhook failure rate is {failure_rate:.0%}, above the "
                 f"{self._settings.webhook_failure_rate_alert_threshold:.0%} threshold."
             )
+        if dead_lettered_count > 0:
+            alerts.append(f"{dead_lettered_count} webhook event(s) are dead-lettered and need operator review.")
         if redelivery_counts[WEBHOOK_STATUS_QUEUED] > 0:
             alerts.append(f"{redelivery_counts[WEBHOOK_STATUS_QUEUED]} redelivered webhook event(s) are still queued.")
         if redelivery_counts[WEBHOOK_STATUS_FAILED] > 0:
@@ -728,6 +733,7 @@ class ClawPassService:
             leased_backlog_count=leased_backlog_count,
             stalled_backlog_count=stalled_backlog_count,
             scheduled_retry_count=scheduled_retry_count,
+            dead_lettered_count=dead_lettered_count,
             delivered_count=delivered_count,
             failed_count=failed_count,
             skipped_count=skipped_count,

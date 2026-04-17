@@ -57,9 +57,10 @@ class WebhookDispatcher:
             """
             INSERT INTO webhook_events(
               id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-              lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, created_at, updated_at
+              lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
+              dead_letter_reason, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -75,6 +76,8 @@ class WebhookDispatcher:
                 available_at,
                 retry_parent_id,
                 retry_attempt,
+                None,
+                None,
                 now,
                 now,
             ),
@@ -245,9 +248,13 @@ class WebhookDispatcher:
     def _maybe_schedule_retry(self, row: dict[str, Any]) -> None:
         current_retry_attempt = int(row.get("retry_attempt") or 0)
         if current_retry_attempt >= self._settings.webhook_auto_retry_limit:
+            self._mark_dead_letter(
+                event_id=row["id"],
+                reason=f"Automatic retry budget exhausted after {current_retry_attempt} queued retr{'y' if current_retry_attempt == 1 else 'ies'}.",
+            )
             return
         next_retry_attempt = current_retry_attempt + 1
-        delay_seconds = self._settings.webhook_auto_retry_base_delay_seconds * (2 ** max(0, current_retry_attempt))
+        delay_seconds = self._compute_retry_delay_seconds(row["id"], current_retry_attempt)
         self.dispatch(
             request_id=row["request_id"],
             event_type=row["event_type"],
@@ -256,4 +263,28 @@ class WebhookDispatcher:
             available_at=add_seconds_iso(delay_seconds),
             retry_parent_id=row["id"],
             retry_attempt=next_retry_attempt,
+        )
+
+    def _compute_retry_delay_seconds(self, event_id: str, current_retry_attempt: int) -> int:
+        base_delay = self._settings.webhook_auto_retry_base_delay_seconds * (2 ** max(0, current_retry_attempt))
+        capped_delay = min(base_delay, self._settings.webhook_auto_retry_max_delay_seconds)
+        jitter_limit = min(
+            max(0, self._settings.webhook_auto_retry_jitter_seconds),
+            max(0, self._settings.webhook_auto_retry_max_delay_seconds - capped_delay),
+        )
+        if jitter_limit <= 0:
+            return capped_delay
+        digest = hashlib.sha256(f"{event_id}:{current_retry_attempt + 1}".encode("utf-8")).digest()
+        jitter_offset = int.from_bytes(digest[:2], "big") % (jitter_limit + 1)
+        return capped_delay + jitter_offset
+
+    def _mark_dead_letter(self, *, event_id: str, reason: str) -> None:
+        now = utc_now_iso()
+        self._db.execute(
+            """
+            UPDATE webhook_events
+            SET dead_lettered_at = ?, dead_letter_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, reason, now, event_id),
         )

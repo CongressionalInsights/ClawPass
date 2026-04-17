@@ -189,6 +189,21 @@ function formatPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatRelativeTime(value) {
+  const target = parseIso(value);
+  if (!target) {
+    return "now";
+  }
+  const deltaMs = target.getTime() - Date.now();
+  const prefix = deltaMs >= 0 ? "in" : "";
+  const suffix = deltaMs < 0 ? "ago" : "";
+  const totalSeconds = Math.max(0, Math.round(Math.abs(deltaMs) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const valueLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  return [prefix, valueLabel, suffix].filter(Boolean).join(" ");
+}
+
 async function refreshWebhookSummary() {
   const summary = await api("/v1/webhook-summary");
   $("webhook-health").textContent = `Health: ${summary.health_state}`;
@@ -205,9 +220,11 @@ async function refreshWebhookSummary() {
     : '<div class="alert-item ok">No active webhook alerts.</div>';
   $("webhook-stats").innerHTML = [
     metricCard("Backlog", summary.backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
+    metricCard("Scheduled retries", summary.scheduled_retry_count, summary.scheduled_retry_count ? "warn" : "normal"),
     metricCard("Leased backlog", summary.leased_backlog_count),
     metricCard("Stalled backlog", summary.stalled_backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
     metricCard("Failure rate", formatPercent(summary.failure_rate), summary.failed_count ? "danger" : "normal"),
+    metricCard("Dead-lettered", summary.dead_lettered_count, summary.dead_lettered_count ? "danger" : "normal"),
     metricCard("Redelivery backlog", summary.redelivery_backlog_count, summary.redelivery_backlog_count ? "warn" : "normal"),
     metricCard("Redelivery failures", summary.redelivery_failed_count, summary.redelivery_failed_count ? "danger" : "normal"),
   ].join("");
@@ -231,6 +248,52 @@ function isStalledWebhookEvent(event) {
   return event.status === "queued" && isQueuedEventDue(event) && !isQueuedEventLeased(event);
 }
 
+function isDeadLetteredWebhookEvent(event) {
+  return Boolean(event.dead_lettered_at);
+}
+
+function resolveRetryRootId(event, eventById, cache) {
+  if (cache.has(event.id)) {
+    return cache.get(event.id);
+  }
+  let rootId = event.id;
+  if (event.retry_parent_id) {
+    const parent = eventById.get(event.retry_parent_id);
+    rootId = parent ? resolveRetryRootId(parent, eventById, cache) : event.retry_parent_id;
+  }
+  cache.set(event.id, rootId);
+  return rootId;
+}
+
+function buildWebhookChainStats(events) {
+  const eventById = new Map(events.map((event) => [event.id, event]));
+  const rootCache = new Map();
+  const chainStatsByRoot = new Map();
+  events.forEach((event) => {
+    const rootId = resolveRetryRootId(event, eventById, rootCache);
+    const stats = chainStatsByRoot.get(rootId) || {
+      eventCount: 0,
+      failedCount: 0,
+      deadLetteredCount: 0,
+      maxRetryAttempt: 0,
+      latestAvailableAt: null,
+    };
+    stats.eventCount += 1;
+    if (event.status === "failed") {
+      stats.failedCount += 1;
+    }
+    if (event.dead_lettered_at) {
+      stats.deadLetteredCount += 1;
+    }
+    stats.maxRetryAttempt = Math.max(stats.maxRetryAttempt, event.retry_attempt || 0);
+    if (event.available_at && (!stats.latestAvailableAt || event.available_at > stats.latestAvailableAt)) {
+      stats.latestAvailableAt = event.available_at;
+    }
+    chainStatsByRoot.set(rootId, stats);
+  });
+  return { chainStatsByRoot, rootByEventId: rootCache };
+}
+
 function setWebhookFilter(filter) {
   state.webhookFilter = filter;
   [
@@ -242,16 +305,34 @@ function setWebhookFilter(filter) {
   });
 }
 
-function renderWebhookEventCard(event) {
+function renderWebhookEventCard(event, chainStats) {
   const card = document.createElement("div");
   card.className = "request-card";
   const retryLabel = event.retry_attempt ? `retry=${event.retry_attempt}` : "initial";
-  const scheduleLabel = event.available_at ? `available=${event.available_at}` : "available=now";
-  const stateLabel = isStalledWebhookEvent(event) ? "stalled" : event.status;
+  const scheduleLabel = event.available_at
+    ? `available=${event.available_at} (${formatRelativeTime(event.available_at)})`
+    : "available=now";
+  const stateLabel = isDeadLetteredWebhookEvent(event)
+    ? "dead-lettered"
+    : isStalledWebhookEvent(event)
+      ? "stalled"
+      : event.status;
+  const historyBits = [
+    `chain=${chainStats.eventCount}`,
+    `failures=${chainStats.failedCount}`,
+    `max-retry=${chainStats.maxRetryAttempt}`,
+  ];
+  if (chainStats.deadLetteredCount > 0) {
+    historyBits.push(`dead-lettered=${chainStats.deadLetteredCount}`);
+  }
   card.innerHTML = `
     <strong>${event.id}</strong>
     <div class="request-meta">${event.event_type} · request=${event.request_id} · state=${stateLabel}</div>
     <div class="request-meta">${retryLabel} · attempts=${event.attempt_count} · ${scheduleLabel}</div>
+    <div class="request-meta">${historyBits.join(" · ")}</div>
+    ${event.retry_parent_id ? `<div class="request-meta">retry-parent=${event.retry_parent_id}</div>` : ""}
+    ${event.dead_lettered_at ? `<div class="request-meta">dead-lettered=${event.dead_lettered_at}</div>` : ""}
+    ${event.dead_letter_reason ? `<div class="request-meta">dead-letter-reason=${event.dead_letter_reason}</div>` : ""}
     ${event.last_error ? `<div class="request-meta">error=${event.last_error}</div>` : ""}
     <div class="actions"></div>
   `;
@@ -304,13 +385,21 @@ async function refreshWebhookAttentionEvents() {
     api("/v1/webhook-events?status=failed&limit=50"),
   ]);
   const events = [...failedEvents, ...queuedEvents];
+  const { chainStatsByRoot, rootByEventId } = buildWebhookChainStats(events);
   const filtered = events
     .filter((event) => {
       if (state.webhookFilter === "failed") return event.status === "failed";
       if (state.webhookFilter === "stalled") return isStalledWebhookEvent(event);
       return event.status === "failed" || isStalledWebhookEvent(event);
     })
-    .sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
+    .sort((left, right) => {
+      const leftPriority = isDeadLetteredWebhookEvent(left) ? 0 : left.status === "failed" ? 1 : 2;
+      const rightPriority = isDeadLetteredWebhookEvent(right) ? 0 : right.status === "failed" ? 1 : 2;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      return (right.updated_at || "").localeCompare(left.updated_at || "");
+    });
   const container = $("webhook-event-list");
   container.innerHTML = "";
   if (!filtered.length) {
@@ -320,7 +409,16 @@ async function refreshWebhookAttentionEvents() {
     container.appendChild(empty);
     return;
   }
-  filtered.forEach((event) => container.appendChild(renderWebhookEventCard(event)));
+  filtered.forEach((event) => {
+    const rootId = rootByEventId.get(event.id) || event.id;
+    container.appendChild(renderWebhookEventCard(event, chainStatsByRoot.get(rootId) || {
+      eventCount: 1,
+      failedCount: event.status === "failed" ? 1 : 0,
+      deadLetteredCount: event.dead_lettered_at ? 1 : 0,
+      maxRetryAttempt: event.retry_attempt || 0,
+      latestAvailableAt: event.available_at || null,
+    }));
+  });
 }
 
 async function refreshWebhookOps() {

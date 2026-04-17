@@ -1464,6 +1464,10 @@
             "type": "integer",
             "title": "Scheduled Retry Count"
           },
+          "dead_lettered_count": {
+            "type": "integer",
+            "title": "Dead Lettered Count"
+          },
           "delivered_count": {
             "type": "integer",
             "title": "Delivered Count"
@@ -1552,6 +1556,7 @@
           "leased_backlog_count",
           "stalled_backlog_count",
           "scheduled_retry_count",
+          "dead_lettered_count",
           "delivered_count",
           "failed_count",
           "skipped_count",
@@ -1639,6 +1644,28 @@
             "type": "integer",
             "title": "Retry Attempt",
             "default": 0
+          },
+          "dead_lettered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dead Lettered At"
+          },
+          "dead_letter_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dead Letter Reason"
           },
           "created_at": {
             "type": "string",

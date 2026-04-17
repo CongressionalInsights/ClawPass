@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   available_at TEXT,
   retry_parent_id TEXT,
   retry_attempt INTEGER NOT NULL DEFAULT 0,
+  dead_lettered_at TEXT,
+  dead_letter_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -158,6 +160,10 @@ class Database:
             connection.execute("ALTER TABLE webhook_events ADD COLUMN retry_parent_id TEXT")
         if "retry_attempt" not in columns:
             connection.execute("ALTER TABLE webhook_events ADD COLUMN retry_attempt INTEGER NOT NULL DEFAULT 0")
+        if "dead_lettered_at" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN dead_lettered_at TEXT")
+        if "dead_letter_reason" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN dead_letter_reason TEXT")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_available_lease_created ON webhook_events(status, available_at, lease_expires_at, created_at)"
         )

@@ -259,6 +259,8 @@ select {
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 pre {
