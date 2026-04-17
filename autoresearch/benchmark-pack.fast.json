@@ -18,6 +18,7 @@
     "ts-sdk/*/*",
     "scripts/repo_autoresearch_eval.py",
     "scripts/check_sdk_roundtrip.py",
+    "scripts/check_ts_sdk_roundtrip.ts",
     "autoresearch/*"
   ],
   "benchmarks": [

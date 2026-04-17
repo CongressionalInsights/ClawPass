@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+import httpx
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 from fastapi import HTTPException
@@ -140,6 +141,82 @@ def test_cancel_request_emits_cancelled_event(service):
     event_types = {event.event_type for event in events}
     assert "approval.pending" in event_types
     assert "approval.cancelled" in event_types
+
+
+def test_webhook_delivery_retries_once_on_transient_failure(monkeypatch, service):
+    attempts = {"count": 0}
+
+    class RetryingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise httpx.TimeoutException("timed out")
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RetryingClient)
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:webhook-retry",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+
+    events = service.list_webhook_events(request.id)
+    assert attempts["count"] == 2
+    assert events[0].event_type == "approval.pending"
+    assert events[0].status == "delivered"
+    assert events[0].attempt_count == 2
+    assert events[0].last_error is None
+
+
+def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, service):
+    attempts = {"count": 0}
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            attempts["count"] += 1
+            request = httpx.Request("POST", url)
+            response = httpx.Response(400, request=request)
+            raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:webhook-fail",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+
+    events = service.list_webhook_events(request.id)
+    assert attempts["count"] == 1
+    assert events[0].event_type == "approval.pending"
+    assert events[0].status == "failed"
+    assert events[0].attempt_count == 1
+    assert events[0].last_error == "bad request"
 
 
 def test_duplicate_request_id_returns_conflict(service):

@@ -36,7 +36,7 @@ python3 scripts/repo_autoresearch_eval.py \
 2. Change only files inside the allowed surface.
 3. Run the fast pack against the current tree.
 4. Keep only changes that improve the repo or materially clarify the contract without regressing checks.
-5. Run the full pack before calling a candidate strong.
+5. Run the full pack before calling a candidate strong; the full pack should validate both SDKs, not only the Python client.
 
 ## Good Targets
 

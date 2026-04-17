@@ -15,7 +15,7 @@ The goal is to keep experiments reviewable and grounded in reproducible checks, 
 ## Packs
 
 - `benchmark-pack.fast.json`: quick keep/discard pass for iteration speed
-- `benchmark-pack.full.json`: broader confirmation pass before keeping a stronger candidate
+- `benchmark-pack.full.json`: broader confirmation pass before keeping a stronger candidate, including both Python and TypeScript SDK round-trip checks
 
 Run the fast pack from the repo root:
 

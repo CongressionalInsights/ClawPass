@@ -10,6 +10,9 @@ from clawpass_server.core.config import Settings
 from clawpass_server.core.database import Database
 from clawpass_server.core.utils import json_dumps, stable_id, utc_now_iso
 
+MAX_WEBHOOK_DELIVERY_ATTEMPTS = 2
+RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
 
 class WebhookDispatcher:
     def __init__(self, db: Database, settings: Settings) -> None:
@@ -25,7 +28,6 @@ class WebhookDispatcher:
         attempts = 0
 
         if callback_url:
-            attempts = 1
             headers = {
                 "Content-Type": "application/json",
                 "X-ClawPass-Event": event_type,
@@ -39,14 +41,20 @@ class WebhookDispatcher:
                 ).hexdigest()
                 headers["X-ClawPass-Signature"] = f"sha256={signature}"
                 headers["X-LedgerClaw-Signature"] = f"sha256={signature}"
-            try:
-                with httpx.Client(timeout=self._settings.webhook_timeout_seconds) as client:
-                    response = client.post(callback_url, content=payload_json, headers=headers)
-                    response.raise_for_status()
-                status = "delivered"
-            except Exception as exc:  # pragma: no cover - exercised in integration tests with monkeypatch
-                status = "failed"
-                error = str(exc)
+            with httpx.Client(timeout=self._settings.webhook_timeout_seconds) as client:
+                for attempt in range(1, MAX_WEBHOOK_DELIVERY_ATTEMPTS + 1):
+                    attempts = attempt
+                    try:
+                        response = client.post(callback_url, content=payload_json, headers=headers)
+                        response.raise_for_status()
+                        status = "delivered"
+                        error = None
+                        break
+                    except Exception as exc:  # pragma: no cover - exercised in integration tests with monkeypatch
+                        status = "failed"
+                        error = str(exc)
+                        if not self._should_retry(exc) or attempt == MAX_WEBHOOK_DELIVERY_ATTEMPTS:
+                            break
 
         self._db.execute(
             """
@@ -68,3 +76,8 @@ class WebhookDispatcher:
                 now,
             ),
         )
+
+    def _should_retry(self, exc: Exception) -> bool:
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code in RETRYABLE_HTTP_STATUS_CODES
+        return isinstance(exc, httpx.TransportError)
