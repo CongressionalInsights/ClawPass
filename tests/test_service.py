@@ -20,7 +20,7 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterStartRequest,
 )
 from clawpass_server.core.database import Database
-from clawpass_server.core.utils import utc_now
+from clawpass_server.core.utils import parse_iso, utc_now
 from clawpass_server.core.webhooks import WebhookDispatcher
 
 
@@ -289,6 +289,7 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
     assert summary.backlog_count == 1
     assert summary.leased_backlog_count == 0
     assert summary.stalled_backlog_count == 1
+    assert summary.scheduled_retry_count == 0
     assert summary.delivered_count == 1
     assert summary.failed_count == 1
     assert summary.skipped_count == 0
@@ -305,6 +306,54 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
     assert len(summary.alerts) == 2
     assert "stalled event" in summary.alerts[0]
     assert "failure rate" in summary.alerts[1]
+
+
+def test_failed_delivery_schedules_automatic_retry_with_backoff(monkeypatch, service):
+    tasks = []
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            request = httpx.Request("POST", url)
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: tasks.append(task))
+
+    request = service.create_approval_request(
+        CreateApprovalRequest(
+            action_type="digest.publish",
+            action_hash="sha256:auto-retry",
+            risk_level="low",
+            callback_url="https://example.com/webhooks",
+        )
+    )
+    assert len(tasks) == 1
+    tasks[0]()
+
+    events = service.list_webhook_events(request.id)
+    failed_events = [event for event in events if event.status == "failed"]
+    queued_events = [event for event in events if event.status == "queued"]
+    assert len(failed_events) == 1
+    assert len(queued_events) == 1
+    retry_event = queued_events[0]
+    assert retry_event.retry_parent_id == failed_events[0].id
+    assert retry_event.retry_attempt == 1
+    assert retry_event.available_at is not None
+    assert parse_iso(retry_event.available_at) > utc_now()
+
+    summary = service.get_webhook_delivery_summary()
+    assert summary.scheduled_retry_count == 1
+    assert summary.redelivery_count == 1
 
 
 def test_webhook_delivery_lease_prevents_duplicate_multi_instance_delivery(monkeypatch, settings):
@@ -370,6 +419,66 @@ def test_webhook_delivery_lease_prevents_duplicate_multi_instance_delivery(monke
     assert row["attempt_count"] == 1
     assert row["lease_owner"] is None
     assert row["lease_expires_at"] is None
+
+
+def test_retry_webhook_event_now_requeues_stalled_event(monkeypatch, service):
+    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    available_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    service._db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
+          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-stalled",
+            "req-stalled",
+            "approval.pending",
+            json.dumps({"request_id": "req-stalled"}),
+            "https://example.com/webhooks",
+            "queued",
+            None,
+            0,
+            None,
+            None,
+            available_at,
+            None,
+            0,
+            created_at,
+            created_at,
+        ),
+    )
+
+    class RecordingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
+
+    retried = service.retry_webhook_event_now("whevt-stalled")
+    assert retried.id == "whevt-stalled"
+    assert retried.status == "queued"
+
+    delivered = service.list_webhook_events("req-stalled")
+    assert delivered[0].status == "delivered"
+    assert retried.available_at is not None
+
+    summary = service.get_webhook_delivery_summary()
+    assert summary.backlog_count == 0
+    assert summary.stalled_backlog_count == 0
+    assert summary.health_state == "healthy"
 
 
 def test_recover_queued_webhook_reclaims_expired_lease(monkeypatch, service):

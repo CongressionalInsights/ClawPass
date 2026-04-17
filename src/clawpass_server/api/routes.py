@@ -119,4 +119,8 @@ def get_router(get_service: callable) -> APIRouter:
     def redeliver_webhook_event(event_id: str, svc: ClawPassService = Depends(service)) -> WebhookEventResponse:
         return svc.redeliver_webhook_event(event_id)
 
+    @router.post("/webhook-events/{event_id}/retry-now", response_model=WebhookEventResponse)
+    def retry_webhook_event_now(event_id: str, svc: ClawPassService = Depends(service)) -> WebhookEventResponse:
+        return svc.retry_webhook_event_now(event_id)
+
     return router

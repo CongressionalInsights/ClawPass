@@ -678,6 +678,48 @@
         }
       }
     },
+    "/v1/webhook-events/{event_id}/retry-now": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Retry Webhook Event Now",
+        "operationId": "retry_webhook_event_now_v1_webhook_events__event_id__retry_now_post",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEventResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Healthz",
@@ -1418,6 +1460,10 @@
             "type": "integer",
             "title": "Stalled Backlog Count"
           },
+          "scheduled_retry_count": {
+            "type": "integer",
+            "title": "Scheduled Retry Count"
+          },
           "delivered_count": {
             "type": "integer",
             "title": "Delivered Count"
@@ -1505,6 +1551,7 @@
           "backlog_count",
           "leased_backlog_count",
           "stalled_backlog_count",
+          "scheduled_retry_count",
           "delivered_count",
           "failed_count",
           "skipped_count",
@@ -1554,6 +1601,44 @@
           "attempt_count": {
             "type": "integer",
             "title": "Attempt Count"
+          },
+          "available_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available At"
+          },
+          "lease_expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lease Expires At"
+          },
+          "retry_parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Parent Id"
+          },
+          "retry_attempt": {
+            "type": "integer",
+            "title": "Retry Attempt",
+            "default": 0
           },
           "created_at": {
             "type": "string",

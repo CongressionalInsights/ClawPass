@@ -26,6 +26,8 @@ class _FakeHttpClient:
             return _DummyResponse({"id": path.split("/")[-2], "status": "CANCELLED", "decision": "CANCELLED"})
         if path.endswith("/redeliver"):
             return _DummyResponse({"id": "whevt-redelivered", "status": "queued"})
+        if path.endswith("/retry-now"):
+            return _DummyResponse({"id": path.split("/")[-2], "status": "queued"})
         raise AssertionError(f"Unexpected POST {path}")
 
     def get(self, path, params=None):
@@ -33,7 +35,18 @@ class _FakeHttpClient:
         if path == "/v1/approval-requests":
             return _DummyResponse([{"id": "req-pending", "status": "PENDING"}])
         if path == "/v1/webhook-summary":
-            return _DummyResponse({"backlog_count": 1, "failure_rate": 0.5, "redelivery_count": 1})
+            return _DummyResponse(
+                {
+                    "backlog_count": 1,
+                    "leased_backlog_count": 0,
+                    "stalled_backlog_count": 1,
+                    "scheduled_retry_count": 0,
+                    "failure_rate": 0.5,
+                    "redelivery_count": 1,
+                    "health_state": "warning",
+                    "alerts": ["failure rate high"],
+                }
+            )
         if path == "/v1/webhook-events":
             return _DummyResponse(
                 [
@@ -41,6 +54,10 @@ class _FakeHttpClient:
                         "request_id": params["request_id"],
                         "event_type": params.get("event_type", "approval.cancelled"),
                         "status": params.get("status", "skipped"),
+                        "available_at": None,
+                        "lease_expires_at": None,
+                        "retry_parent_id": None,
+                        "retry_attempt": 0,
                     }
                 ]
             )
@@ -145,7 +162,17 @@ def test_python_sdk_list_webhook_events_forwards_request_filter():
             "cursor": "whevt-cursor",
         },
     )
-    assert response == [{"request_id": "req-cancel", "event_type": "approval.pending", "status": "failed"}]
+    assert response == [
+        {
+            "request_id": "req-cancel",
+            "event_type": "approval.pending",
+            "status": "failed",
+            "available_at": None,
+            "lease_expires_at": None,
+            "retry_parent_id": None,
+            "retry_attempt": 0,
+        }
+    ]
 
 
 def test_python_sdk_redeliver_webhook_event_forwards_event_id():
@@ -162,6 +189,20 @@ def test_python_sdk_redeliver_webhook_event_forwards_event_id():
     assert response["status"] == "queued"
 
 
+def test_python_sdk_retry_webhook_event_now_forwards_event_id():
+    client = ClawPassClient("http://localhost:8081")
+    fake_client = _FakeHttpClient()
+    client._client = fake_client
+    try:
+        response = client.retry_webhook_event_now("whevt-stalled")
+    finally:
+        client.close()
+
+    assert fake_client.calls[0] == ("post", "/v1/webhook-events/whevt-stalled/retry-now", {})
+    assert response["id"] == "whevt-stalled"
+    assert response["status"] == "queued"
+
+
 def test_python_sdk_get_webhook_summary_uses_summary_endpoint():
     client = ClawPassClient("http://localhost:8081")
     fake_client = _FakeHttpClient()
@@ -173,5 +214,7 @@ def test_python_sdk_get_webhook_summary_uses_summary_endpoint():
 
     assert fake_client.calls[0] == ("get", "/v1/webhook-summary", None)
     assert response["backlog_count"] == 1
+    assert response["stalled_backlog_count"] == 1
+    assert response["scheduled_retry_count"] == 0
     assert response["failure_rate"] == 0.5
     assert response["redelivery_count"] == 1

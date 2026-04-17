@@ -1,5 +1,6 @@
 const state = {
   approverId: null,
+  webhookFilter: "attention",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -212,6 +213,120 @@ async function refreshWebhookSummary() {
   ].join("");
 }
 
+function parseIso(value) {
+  return value ? new Date(value) : null;
+}
+
+function isQueuedEventDue(event) {
+  const availableAt = parseIso(event.available_at);
+  return !availableAt || availableAt <= new Date();
+}
+
+function isQueuedEventLeased(event) {
+  const leaseExpiresAt = parseIso(event.lease_expires_at);
+  return Boolean(leaseExpiresAt && leaseExpiresAt > new Date());
+}
+
+function isStalledWebhookEvent(event) {
+  return event.status === "queued" && isQueuedEventDue(event) && !isQueuedEventLeased(event);
+}
+
+function setWebhookFilter(filter) {
+  state.webhookFilter = filter;
+  [
+    ["attention", "btn-webhook-filter-attention"],
+    ["failed", "btn-webhook-filter-failed"],
+    ["stalled", "btn-webhook-filter-stalled"],
+  ].forEach(([value, id]) => {
+    $(id).classList.toggle("active", value === filter);
+  });
+}
+
+function renderWebhookEventCard(event) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  const retryLabel = event.retry_attempt ? `retry=${event.retry_attempt}` : "initial";
+  const scheduleLabel = event.available_at ? `available=${event.available_at}` : "available=now";
+  const stateLabel = isStalledWebhookEvent(event) ? "stalled" : event.status;
+  card.innerHTML = `
+    <strong>${event.id}</strong>
+    <div class="request-meta">${event.event_type} · request=${event.request_id} · state=${stateLabel}</div>
+    <div class="request-meta">${retryLabel} · attempts=${event.attempt_count} · ${scheduleLabel}</div>
+    ${event.last_error ? `<div class="request-meta">error=${event.last_error}</div>` : ""}
+    <div class="actions"></div>
+  `;
+  const actions = card.querySelector(".actions");
+
+  if (event.status === "failed") {
+    const button = document.createElement("button");
+    button.className = "btn";
+    button.textContent = "Redeliver";
+    button.onclick = async () => {
+      try {
+        setStatus("Redelivering webhook...");
+        await api(`/v1/webhook-events/${event.id}/redeliver`, { method: "POST", body: JSON.stringify({}) });
+        await refreshWebhookOps();
+        setStatus("Ready");
+      } catch (error) {
+        log("Webhook redelivery failed", { event_id: event.id, error: String(error) });
+        alert(String(error));
+        setStatus("Error");
+      }
+    };
+    actions.appendChild(button);
+  }
+
+  if (isStalledWebhookEvent(event)) {
+    const button = document.createElement("button");
+    button.className = "btn";
+    button.textContent = "Retry now";
+    button.onclick = async () => {
+      try {
+        setStatus("Retrying stalled webhook...");
+        await api(`/v1/webhook-events/${event.id}/retry-now`, { method: "POST", body: JSON.stringify({}) });
+        await refreshWebhookOps();
+        setStatus("Ready");
+      } catch (error) {
+        log("Webhook retry-now failed", { event_id: event.id, error: String(error) });
+        alert(String(error));
+        setStatus("Error");
+      }
+    };
+    actions.appendChild(button);
+  }
+
+  return card;
+}
+
+async function refreshWebhookAttentionEvents() {
+  const [queuedEvents, failedEvents] = await Promise.all([
+    api("/v1/webhook-events?status=queued&limit=50"),
+    api("/v1/webhook-events?status=failed&limit=50"),
+  ]);
+  const events = [...failedEvents, ...queuedEvents];
+  const filtered = events
+    .filter((event) => {
+      if (state.webhookFilter === "failed") return event.status === "failed";
+      if (state.webhookFilter === "stalled") return isStalledWebhookEvent(event);
+      return event.status === "failed" || isStalledWebhookEvent(event);
+    })
+    .sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
+  const container = $("webhook-event-list");
+  container.innerHTML = "";
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "request-card";
+    empty.innerHTML = '<div class="request-meta">No webhook events match this filter.</div>';
+    container.appendChild(empty);
+    return;
+  }
+  filtered.forEach((event) => container.appendChild(renderWebhookEventCard(event)));
+}
+
+async function refreshWebhookOps() {
+  await Promise.all([refreshWebhookSummary(), refreshWebhookAttentionEvents()]);
+}
+
 async function createRequest() {
   const req = await api("/v1/approval-requests", {
     method: "POST",
@@ -226,7 +341,7 @@ async function createRequest() {
   });
   log("Approval request created.", req);
   await refreshRequests();
-  await refreshWebhookSummary();
+  await refreshWebhookOps();
 }
 
 async function startAndComplete(requestId, decision, method) {
@@ -260,7 +375,7 @@ async function startAndComplete(requestId, decision, method) {
     log("Decision completed via ethereum_signer.", done);
   }
   await refreshRequests();
-  await refreshWebhookSummary();
+  await refreshWebhookOps();
 }
 
 function renderRequestCard(request) {
@@ -371,7 +486,7 @@ function bindButtons() {
 
   $("btn-refresh").onclick = async () => {
     try {
-      await Promise.all([refreshRequests(), refreshWebhookSummary()]);
+      await Promise.all([refreshRequests(), refreshWebhookOps()]);
       setStatus("Ready");
     } catch (error) {
       log("Refresh failed", { error: String(error) });
@@ -403,7 +518,7 @@ function bindButtons() {
 
   $("btn-refresh-webhooks").onclick = async () => {
     try {
-      await refreshWebhookSummary();
+      await refreshWebhookOps();
       setStatus("Ready");
     } catch (error) {
       log("Webhook summary load failed", { error: String(error) });
@@ -411,12 +526,28 @@ function bindButtons() {
       setStatus("Error");
     }
   };
+
+  $("btn-webhook-filter-attention").onclick = async () => {
+    setWebhookFilter("attention");
+    await refreshWebhookAttentionEvents().catch(() => null);
+  };
+
+  $("btn-webhook-filter-failed").onclick = async () => {
+    setWebhookFilter("failed");
+    await refreshWebhookAttentionEvents().catch(() => null);
+  };
+
+  $("btn-webhook-filter-stalled").onclick = async () => {
+    setWebhookFilter("stalled");
+    await refreshWebhookAttentionEvents().catch(() => null);
+  };
 }
 
 async function init() {
   updateDeviceHint();
   bindButtons();
-  await Promise.all([refreshRequests(), refreshWebhookSummary()]).catch(() => null);
+  setWebhookFilter("attention");
+  await Promise.all([refreshRequests(), refreshWebhookOps()]).catch(() => null);
   setStatus("Ready");
 }
 

@@ -22,6 +22,9 @@ class Settings:
     instance_id: str
     webhook_timeout_seconds: float
     webhook_delivery_lease_seconds: int
+    webhook_retry_poll_seconds: int
+    webhook_auto_retry_limit: int
+    webhook_auto_retry_base_delay_seconds: int
     webhook_backlog_alert_threshold: int
     webhook_backlog_alert_after_seconds: int
     webhook_failure_rate_alert_threshold: float
@@ -56,6 +59,19 @@ def load_settings() -> Settings:
         webhook_timeout_seconds=float(_env("CLAWPASS_WEBHOOK_TIMEOUT_SECONDS", "LEDGERCLAW_WEBHOOK_TIMEOUT_SECONDS", "5")),
         webhook_delivery_lease_seconds=int(
             _env("CLAWPASS_WEBHOOK_DELIVERY_LEASE_SECONDS", "LEDGERCLAW_WEBHOOK_DELIVERY_LEASE_SECONDS", "30")
+        ),
+        webhook_retry_poll_seconds=int(
+            _env("CLAWPASS_WEBHOOK_RETRY_POLL_SECONDS", "LEDGERCLAW_WEBHOOK_RETRY_POLL_SECONDS", "5")
+        ),
+        webhook_auto_retry_limit=int(
+            _env("CLAWPASS_WEBHOOK_AUTO_RETRY_LIMIT", "LEDGERCLAW_WEBHOOK_AUTO_RETRY_LIMIT", "2")
+        ),
+        webhook_auto_retry_base_delay_seconds=int(
+            _env(
+                "CLAWPASS_WEBHOOK_AUTO_RETRY_BASE_DELAY_SECONDS",
+                "LEDGERCLAW_WEBHOOK_AUTO_RETRY_BASE_DELAY_SECONDS",
+                "30",
+            )
         ),
         webhook_backlog_alert_threshold=int(
             _env("CLAWPASS_WEBHOOK_BACKLOG_ALERT_THRESHOLD", "LEDGERCLAW_WEBHOOK_BACKLOG_ALERT_THRESHOLD", "1")

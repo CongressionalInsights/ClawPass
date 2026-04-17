@@ -121,6 +121,10 @@ class WebhookEventResponse(BaseModel):
     status: str
     last_error: str | None
     attempt_count: int
+    available_at: str | None = None
+    lease_expires_at: str | None = None
+    retry_parent_id: str | None = None
+    retry_attempt: int = 0
     created_at: str
     updated_at: str
 
@@ -130,6 +134,7 @@ class WebhookDeliverySummary(BaseModel):
     backlog_count: int
     leased_backlog_count: int
     stalled_backlog_count: int
+    scheduled_retry_count: int
     delivered_count: int
     failed_count: int
     skipped_count: int
