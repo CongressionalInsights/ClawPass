@@ -636,6 +636,76 @@
         }
       }
     },
+    "/v1/webhook-endpoints/summary": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Webhook Endpoint Summaries",
+        "operationId": "webhook_endpoint_summaries_v1_webhook_endpoints_summary_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointSummary"
+                  },
+                  "title": "Response Webhook Endpoint Summaries V1 Webhook Endpoints Summary Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhook-events/prune": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Prune Webhook Events",
+        "operationId": "prune_webhook_events_v1_webhook_events_prune_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookPruneResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/webhook-events/{event_id}/redeliver": {
       "post": {
         "tags": [
@@ -1574,6 +1644,100 @@
         ],
         "title": "WebhookDeliverySummary"
       },
+      "WebhookEndpointSummary": {
+        "properties": {
+          "callback_url": {
+            "type": "string",
+            "title": "Callback Url"
+          },
+          "total_events": {
+            "type": "integer",
+            "title": "Total Events"
+          },
+          "queued_count": {
+            "type": "integer",
+            "title": "Queued Count"
+          },
+          "stalled_count": {
+            "type": "integer",
+            "title": "Stalled Count"
+          },
+          "delivered_count": {
+            "type": "integer",
+            "title": "Delivered Count"
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count"
+          },
+          "dead_lettered_count": {
+            "type": "integer",
+            "title": "Dead Lettered Count"
+          },
+          "attempted_count": {
+            "type": "integer",
+            "title": "Attempted Count"
+          },
+          "failure_rate": {
+            "type": "number",
+            "title": "Failure Rate"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          },
+          "latest_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Error"
+          },
+          "health_state": {
+            "type": "string",
+            "title": "Health State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "callback_url",
+          "total_events",
+          "queued_count",
+          "stalled_count",
+          "delivered_count",
+          "failed_count",
+          "dead_lettered_count",
+          "attempted_count",
+          "failure_rate",
+          "next_attempt_at",
+          "last_event_at",
+          "latest_error",
+          "health_state"
+        ],
+        "title": "WebhookEndpointSummary"
+      },
       "WebhookEventResponse": {
         "properties": {
           "id": {
@@ -1688,6 +1852,53 @@
           "updated_at"
         ],
         "title": "WebhookEventResponse"
+      },
+      "WebhookPruneResult": {
+        "properties": {
+          "deleted_delivered_or_skipped": {
+            "type": "integer",
+            "title": "Deleted Delivered Or Skipped"
+          },
+          "deleted_retry_history_events": {
+            "type": "integer",
+            "title": "Deleted Retry History Events"
+          },
+          "total_deleted": {
+            "type": "integer",
+            "title": "Total Deleted"
+          },
+          "delivered_or_skipped_cutoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered Or Skipped Cutoff"
+          },
+          "retry_history_cutoff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry History Cutoff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted_delivered_or_skipped",
+          "deleted_retry_history_events",
+          "total_deleted",
+          "delivered_or_skipped_cutoff",
+          "retry_history_cutoff"
+        ],
+        "title": "WebhookPruneResult"
       }
     }
   }

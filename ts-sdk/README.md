@@ -16,8 +16,10 @@ const cancelled = await client.cancelApprovalRequest(request.id, "operator cance
 const failed = await client.listWebhookEvents({ requestId: request.id, status: "failed", eventType: "approval.pending" });
 const retried = await client.redeliverWebhookEvent(failed[0].id);
 const summary = await client.getWebhookSummary();
+const endpointHealth = await client.listWebhookEndpointSummaries(10);
 const queued = await client.listWebhookEvents({ requestId: request.id, status: "queued" });
 if (queued[0]) await client.retryWebhookEventNow(queued[0].id);
-console.log(summary.health_state, summary.alerts);
+const pruneResult = await client.pruneWebhookEvents();
+console.log(summary.health_state, summary.alerts, endpointHealth[0]?.health_state, pruneResult.total_deleted);
 const pageTwo = await client.listWebhookEvents({ requestId: request.id, limit: 20, cursor: failed[0].id });
 ```

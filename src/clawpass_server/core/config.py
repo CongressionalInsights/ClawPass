@@ -30,6 +30,8 @@ class Settings:
     webhook_backlog_alert_threshold: int
     webhook_backlog_alert_after_seconds: int
     webhook_failure_rate_alert_threshold: float
+    webhook_event_retention_days: int
+    webhook_retry_history_retention_days: int
     webhook_secret: str | None
 
 
@@ -97,6 +99,16 @@ def load_settings() -> Settings:
         ),
         webhook_failure_rate_alert_threshold=float(
             _env("CLAWPASS_WEBHOOK_FAILURE_RATE_ALERT_THRESHOLD", "LEDGERCLAW_WEBHOOK_FAILURE_RATE_ALERT_THRESHOLD", "0.25")
+        ),
+        webhook_event_retention_days=int(
+            _env("CLAWPASS_WEBHOOK_EVENT_RETENTION_DAYS", "LEDGERCLAW_WEBHOOK_EVENT_RETENTION_DAYS", "14")
+        ),
+        webhook_retry_history_retention_days=int(
+            _env(
+                "CLAWPASS_WEBHOOK_RETRY_HISTORY_RETENTION_DAYS",
+                "LEDGERCLAW_WEBHOOK_RETRY_HISTORY_RETENTION_DAYS",
+                "30",
+            )
         ),
         webhook_secret=os.getenv("CLAWPASS_WEBHOOK_SECRET") or os.getenv("LEDGERCLAW_WEBHOOK_SECRET") or None,
     )

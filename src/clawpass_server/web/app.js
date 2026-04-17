@@ -204,6 +204,10 @@ function formatRelativeTime(value) {
   return [prefix, valueLabel, suffix].filter(Boolean).join(" ");
 }
 
+function formatTimestampWithRelative(value) {
+  return value ? `${value} (${formatRelativeTime(value)})` : "n/a";
+}
+
 async function refreshWebhookSummary() {
   const summary = await api("/v1/webhook-summary");
   $("webhook-health").textContent = `Health: ${summary.health_state}`;
@@ -379,6 +383,35 @@ function renderWebhookEventCard(event, chainStats) {
   return card;
 }
 
+function renderWebhookEndpointCard(summary) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  const nextAttempt = summary.next_attempt_at ? formatTimestampWithRelative(summary.next_attempt_at) : "none scheduled";
+  card.innerHTML = `
+    <strong>${summary.callback_url}</strong>
+    <div class="request-meta">state=${summary.health_state} · total=${summary.total_events} · delivered=${summary.delivered_count} · failed=${summary.failed_count}</div>
+    <div class="request-meta">queued=${summary.queued_count} · stalled=${summary.stalled_count} · dead-lettered=${summary.dead_lettered_count} · failure-rate=${formatPercent(summary.failure_rate)}</div>
+    <div class="request-meta">next-attempt=${nextAttempt}</div>
+    <div class="request-meta">last-event=${summary.last_event_at || "n/a"}</div>
+    ${summary.latest_error ? `<div class="request-meta">latest-error=${summary.latest_error}</div>` : ""}
+  `;
+  return card;
+}
+
+async function refreshWebhookEndpointSummaries() {
+  const summaries = await api("/v1/webhook-endpoints/summary?limit=20");
+  const container = $("webhook-endpoint-list");
+  container.innerHTML = "";
+  if (!summaries.length) {
+    const empty = document.createElement("div");
+    empty.className = "request-card";
+    empty.innerHTML = '<div class="request-meta">No callback endpoints recorded yet.</div>';
+    container.appendChild(empty);
+    return;
+  }
+  summaries.forEach((summary) => container.appendChild(renderWebhookEndpointCard(summary)));
+}
+
 async function refreshWebhookAttentionEvents() {
   const [queuedEvents, failedEvents] = await Promise.all([
     api("/v1/webhook-events?status=queued&limit=50"),
@@ -422,7 +455,7 @@ async function refreshWebhookAttentionEvents() {
 }
 
 async function refreshWebhookOps() {
-  await Promise.all([refreshWebhookSummary(), refreshWebhookAttentionEvents()]);
+  await Promise.all([refreshWebhookSummary(), refreshWebhookEndpointSummaries(), refreshWebhookAttentionEvents()]);
 }
 
 async function createRequest() {
@@ -620,6 +653,20 @@ function bindButtons() {
       setStatus("Ready");
     } catch (error) {
       log("Webhook summary load failed", { error: String(error) });
+      alert(String(error));
+      setStatus("Error");
+    }
+  };
+
+  $("btn-prune-webhooks").onclick = async () => {
+    try {
+      setStatus("Pruning webhook history...");
+      const result = await api("/v1/webhook-events/prune", { method: "POST", body: JSON.stringify({}) });
+      log("Webhook history pruned.", result);
+      await refreshWebhookOps();
+      setStatus("Ready");
+    } catch (error) {
+      log("Webhook history prune failed", { error: String(error) });
       alert(String(error));
       setStatus("Error");
     }
