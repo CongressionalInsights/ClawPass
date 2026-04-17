@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -17,12 +19,14 @@ from ledgerclaw_server.core.constants import (
     APPROVAL_STATUS_PENDING,
     DECISION_APPROVE,
     EVENT_APPROVAL_APPROVED,
+    EVENT_APPROVAL_CANCELLED,
     EVENT_APPROVAL_DENIED,
     EVENT_APPROVAL_EXPIRED,
     EVENT_APPROVAL_PENDING,
     METHOD_ETHEREUM_SIGNER,
     METHOD_LEDGER_WEBAUTHN,
     METHOD_WEBAUTHN,
+    VALID_APPROVAL_STATUSES,
     VALID_RISK_LEVELS,
 )
 from ledgerclaw_server.core.database import Database
@@ -161,33 +165,42 @@ class LedgerClawService:
             raise HTTPException(status_code=400, detail=f"Unsupported risk_level '{payload.risk_level}'.")
 
         expires_at = payload.expires_at or add_minutes_iso(self._settings.approval_default_ttl_minutes)
-        if parse_iso(expires_at) <= utc_now():
+        try:
+            parsed_expires_at = parse_iso(expires_at)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="expires_at must be a valid ISO 8601 timestamp.") from exc
+        parsed_expires_at = parsed_expires_at.astimezone(timezone.utc)
+        expires_at = parsed_expires_at.isoformat().replace("+00:00", "Z")
+        if parsed_expires_at <= utc_now():
             raise HTTPException(status_code=400, detail="expires_at must be in the future.")
 
         now = utc_now_iso()
         nonce = token_urlsafe(12)
-        self._db.execute(
-            """
-            INSERT INTO approval_requests(
-              id, action_type, action_ref, action_hash, requester_id, risk_level, metadata_json, status,
-              decision, approver_id, method, created_at, expires_at, decided_at, nonce, callback_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL, ?, ?)
-            """,
-            (
-                request_id,
-                payload.action_type,
-                payload.action_ref,
-                payload.action_hash,
-                payload.requester_id,
-                risk_level,
-                json_dumps(payload.metadata),
-                APPROVAL_STATUS_PENDING,
-                now,
-                expires_at,
-                nonce,
-                payload.callback_url,
-            ),
-        )
+        try:
+            self._db.execute(
+                """
+                INSERT INTO approval_requests(
+                  id, action_type, action_ref, action_hash, requester_id, risk_level, metadata_json, status,
+                  decision, approver_id, method, created_at, expires_at, decided_at, nonce, callback_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    request_id,
+                    payload.action_type,
+                    payload.action_ref,
+                    payload.action_hash,
+                    payload.requester_id,
+                    risk_level,
+                    json_dumps(payload.metadata),
+                    APPROVAL_STATUS_PENDING,
+                    now,
+                    expires_at,
+                    nonce,
+                    payload.callback_url,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail=f"Approval request '{request_id}' already exists.") from exc
 
         row = self._require_request(request_id)
         self._emit_request_event(row, EVENT_APPROVAL_PENDING)
@@ -233,7 +246,9 @@ class LedgerClawService:
             actor="system",
             payload={"reason": reason},
         )
-        return self._to_approval_response(self._require_request(request_id))
+        updated = self._require_request(request_id)
+        self._emit_request_event(updated, EVENT_APPROVAL_CANCELLED)
+        return self._to_approval_response(updated)
 
     def start_decision(self, request_id: str, payload: DecisionStartRequest) -> DecisionStartResponse:
         request_row = self._expire_if_needed(self._require_request(request_id))
@@ -595,14 +610,18 @@ class LedgerClawService:
         return [WebhookEventResponse(**row) for row in rows]
 
     def list_approval_requests(self, *, status: str | None = None) -> list[ApprovalRequestResponse]:
+        self._expire_pending_requests()
         if status:
+            normalized_status = status.upper()
+            if normalized_status not in VALID_APPROVAL_STATUSES:
+                raise HTTPException(status_code=400, detail=f"Unsupported status '{status}'.")
             rows = self._db.fetchall(
                 "SELECT * FROM approval_requests WHERE status = ? ORDER BY created_at DESC LIMIT 200",
-                (status,),
+                (normalized_status,),
             )
         else:
             rows = self._db.fetchall("SELECT * FROM approval_requests ORDER BY created_at DESC LIMIT 200")
-        return [self._to_approval_response(self._expire_if_needed(row)) for row in rows]
+        return [self._to_approval_response(row) for row in rows]
 
     def _emit_request_event(self, row: dict[str, Any], event_type: str) -> None:
         payload = {
@@ -641,6 +660,15 @@ class LedgerClawService:
         if not row:
             raise HTTPException(status_code=404, detail="Approval request not found.")
         return row
+
+    def _expire_pending_requests(self) -> None:
+        now = utc_now_iso()
+        pending_rows = self._db.fetchall(
+            "SELECT * FROM approval_requests WHERE status = ? AND expires_at <= ?",
+            (APPROVAL_STATUS_PENDING, now),
+        )
+        for row in pending_rows:
+            self._expire_if_needed(row)
 
     def _expire_if_needed(self, row: dict[str, Any]) -> dict[str, Any]:
         if row["status"] != APPROVAL_STATUS_PENDING:
@@ -715,3 +743,6 @@ class LedgerClawService:
             decided_at=row.get("decided_at"),
             callback_url=row.get("callback_url"),
         )
+
+
+ClawPassService = LedgerClawService

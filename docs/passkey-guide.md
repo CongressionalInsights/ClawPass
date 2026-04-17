@@ -2,7 +2,7 @@
 
 ## Mobile flow
 
-1. Open LedgerClaw UI on your phone.
+1. Open ClawPass UI on your phone.
 2. Enter your work email and display name.
 3. Tap **Create passkey now**.
 4. Accept the system passkey prompt (Face ID / biometrics / device PIN).
@@ -10,7 +10,7 @@
 
 ## Desktop flow
 
-1. Open LedgerClaw UI on desktop.
+1. Open ClawPass UI on desktop.
 2. Enter your work email and display name.
 3. Click **Create passkey now** for local desktop passkey.
 4. Or click **Use another device** to trigger cross-device passkey flow.
@@ -20,7 +20,7 @@
 
 If the prompt is dismissed or fails:
 - Click the same button again.
-- LedgerClaw creates a fresh challenge and keeps your approver context.
+- ClawPass creates a fresh challenge and keeps your approver context.
 
 ## Why this matters
 

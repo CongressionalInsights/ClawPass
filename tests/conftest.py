@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 from ledgerclaw_server.adapters.ethereum_adapter import EthereumAdapter  # noqa: E402
 from ledgerclaw_server.core.config import Settings  # noqa: E402
 from ledgerclaw_server.core.database import Database  # noqa: E402
-from ledgerclaw_server.core.service import LedgerClawService  # noqa: E402
+from ledgerclaw_server.core.service import ClawPassService  # noqa: E402
 
 
 class FakeWebAuthnAdapter:
@@ -23,7 +23,7 @@ class FakeWebAuthnAdapter:
             "challenge": challenge,
             "user": {"id": "dXNlcg", "name": kwargs["user_name"], "displayName": kwargs["user_display_name"]},
             "excludeCredentials": [],
-            "rp": {"id": "localhost", "name": "LedgerClaw"},
+            "rp": {"id": "localhost", "name": "ClawPass"},
         }
         if kwargs.get("is_ledger"):
             options["hints"] = ["security-key", "hybrid"]
@@ -54,11 +54,11 @@ class FakeWebAuthnAdapter:
 @pytest.fixture()
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        db_path=tmp_path / "ledgerclaw.db",
+        db_path=tmp_path / "clawpass.db",
         host="127.0.0.1",
         port=8081,
         rp_id="localhost",
-        rp_name="LedgerClaw",
+        rp_name="ClawPass",
         expected_origin="http://localhost:8081",
         expected_origins=["http://localhost:8081"],
         webauthn_timeout_ms=60000,
@@ -70,10 +70,10 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture()
-def service(settings: Settings) -> LedgerClawService:
+def service(settings: Settings) -> ClawPassService:
     db = Database(settings.db_path)
     db.ensure_ready()
-    return LedgerClawService(
+    return ClawPassService(
         settings=settings,
         db=db,
         webauthn=FakeWebAuthnAdapter(),

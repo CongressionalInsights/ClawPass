@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 
-class LedgerClawClient:
+class ClawPassClient:
     def __init__(self, base_url: str, *, timeout: float = 10.0) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = httpx.Client(base_url=self._base_url, timeout=timeout)
@@ -16,6 +16,7 @@ class LedgerClawClient:
     def create_approval_request(
         self,
         *,
+        request_id: str | None = None,
         action_type: str,
         action_hash: str,
         risk_level: str = "low",
@@ -28,6 +29,7 @@ class LedgerClawClient:
         response = self._client.post(
             "/v1/approval-requests",
             json={
+                "request_id": request_id,
                 "action_type": action_type,
                 "action_hash": action_hash,
                 "risk_level": risk_level,
@@ -71,3 +73,6 @@ class LedgerClawClient:
         )
         response.raise_for_status()
         return response.json()
+
+
+LedgerClawClient = ClawPassClient

@@ -1,6 +1,6 @@
 # Ledger Setup Guide
 
-LedgerClaw supports two Ledger paths.
+ClawPass supports two Ledger paths.
 
 ## 1) Ledger as WebAuthn security key
 
@@ -14,7 +14,7 @@ LedgerClaw supports two Ledger paths.
 1. Connect wallet stack with Ledger-backed account.
 2. Click **Add Ledger Ethereum signer**.
 3. Sign the typed challenge (`eth_signTypedData_v4`).
-4. LedgerClaw verifies signer ownership and enrolls the address.
+4. ClawPass verifies signer ownership and enrolls the address.
 
 ## Decision usage
 

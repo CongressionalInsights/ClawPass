@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "LedgerClaw",
+    "title": "ClawPass",
     "description": "Dual-mode approval platform with first-class passkey onboarding.",
     "version": "0.1.0"
   },
@@ -9,7 +9,7 @@
     "/v1/webauthn/register/start": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Webauthn Register Start",
         "operationId": "webauthn_register_start_v1_webauthn_register_start_post",
@@ -50,7 +50,7 @@
     "/v1/webauthn/register/complete": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Webauthn Register Complete",
         "operationId": "webauthn_register_complete_v1_webauthn_register_complete_post",
@@ -91,7 +91,7 @@
     "/v1/approval-requests": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Create Approval Request",
         "operationId": "create_approval_request_v1_approval_requests_post",
@@ -130,7 +130,7 @@
       },
       "get": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "List Approval Requests",
         "operationId": "list_approval_requests_v1_approval_requests_get",
@@ -183,7 +183,7 @@
     "/v1/approval-requests/{request_id}": {
       "get": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Get Approval Request",
         "operationId": "get_approval_request_v1_approval_requests__request_id__get",
@@ -225,7 +225,7 @@
     "/v1/approval-requests/{request_id}/cancel": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Cancel Approval Request",
         "operationId": "cancel_approval_request_v1_approval_requests__request_id__cancel_post",
@@ -277,7 +277,7 @@
     "/v1/approval-requests/{request_id}/decision/start": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Start Decision",
         "operationId": "start_decision_v1_approval_requests__request_id__decision_start_post",
@@ -329,7 +329,7 @@
     "/v1/approval-requests/{request_id}/decision/complete": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Complete Decision",
         "operationId": "complete_decision_v1_approval_requests__request_id__decision_complete_post",
@@ -381,7 +381,7 @@
     "/v1/signers/ethereum/challenge": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Ethereum Signer Challenge",
         "operationId": "ethereum_signer_challenge_v1_signers_ethereum_challenge_post",
@@ -422,7 +422,7 @@
     "/v1/signers/ethereum/verify": {
       "post": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Ethereum Signer Verify",
         "operationId": "ethereum_signer_verify_v1_signers_ethereum_verify_post",
@@ -463,7 +463,7 @@
     "/v1/approvers/{approver_id}/summary": {
       "get": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Approver Summary",
         "operationId": "approver_summary_v1_approvers__approver_id__summary_get",
@@ -505,7 +505,7 @@
     "/v1/webhook-events": {
       "get": {
         "tags": [
-          "ledgerclaw"
+          "clawpass"
         ],
         "summary": "Webhook Events",
         "operationId": "webhook_events_v1_webhook_events_get",

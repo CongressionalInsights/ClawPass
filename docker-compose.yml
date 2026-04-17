@@ -1,18 +1,18 @@
 services:
-  ledgerclaw:
+  clawpass:
     build:
       context: .
     ports:
       - "8081:8081"
     environment:
-      LEDGERCLAW_HOST: 0.0.0.0
-      LEDGERCLAW_PORT: 8081
-      LEDGERCLAW_DB_PATH: /data/ledgerclaw.db
-      LEDGERCLAW_EXPECTED_ORIGIN: http://localhost:8081
-      LEDGERCLAW_RP_ID: localhost
-      LEDGERCLAW_RP_NAME: LedgerClaw
+      CLAWPASS_HOST: 0.0.0.0
+      CLAWPASS_PORT: 8081
+      CLAWPASS_DB_PATH: /data/clawpass.db
+      CLAWPASS_EXPECTED_ORIGIN: http://localhost:8081
+      CLAWPASS_RP_ID: localhost
+      CLAWPASS_RP_NAME: ClawPass
     volumes:
-      - ledgerclaw-data:/data
+      - clawpass-data:/data
 
 volumes:
-  ledgerclaw-data:
+  clawpass-data:

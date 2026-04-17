@@ -5,10 +5,10 @@ import json
 
 from fastapi import FastAPI, HTTPException
 
-from ledgerclaw_sdk_py import LedgerClawClient
+from ledgerclaw_sdk_py import ClawPassClient
 
-app = FastAPI(title="LedgerClaw Generic Producer Example")
-ledgerclaw = LedgerClawClient("http://localhost:8081")
+app = FastAPI(title="ClawPass Generic Producer Example")
+clawpass = ClawPassClient("http://localhost:8081")
 
 
 def digest(data: dict) -> str:
@@ -18,7 +18,7 @@ def digest(data: dict) -> str:
 
 @app.post("/send-sensitive")
 def send_sensitive(payload: dict) -> dict:
-    request = ledgerclaw.create_approval_request(
+    request = clawpass.create_approval_request(
         action_type="generic.send_sensitive",
         action_ref=payload.get("id"),
         action_hash=digest(payload),
@@ -33,8 +33,8 @@ def send_sensitive(payload: dict) -> dict:
     }
 
 
-@app.post("/webhooks/ledgerclaw")
-def ledgerclaw_webhook(payload: dict) -> dict:
+@app.post("/webhooks/clawpass")
+def clawpass_webhook(payload: dict) -> dict:
     status = payload.get("status")
     if status != "APPROVED":
         return {"ignored": True, "status": status}

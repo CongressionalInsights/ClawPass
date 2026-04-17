@@ -1,6 +1,6 @@
-# LedgerClaw
+# ClawPass
 
-LedgerClaw is a standalone approval platform for high-risk operations.
+ClawPass is a standalone approval platform for high-risk operations.
 
 It supports dual-mode cryptographic approvals:
 - Passkeys (WebAuthn) as a first-class path
@@ -19,7 +19,7 @@ It supports dual-mode cryptographic approvals:
 ## Quick Start (Docker-first)
 
 ```bash
-cd ledgerclaw
+cd clawpass
 docker compose up --build
 ```
 
@@ -31,11 +31,11 @@ Open:
 ## Local Dev
 
 ```bash
-cd ledgerclaw
+cd clawpass
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-ledgerclaw-server
+clawpass-server
 ```
 
 ## Core API

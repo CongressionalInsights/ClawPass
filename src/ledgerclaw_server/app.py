@@ -24,7 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     service = LedgerClawService(settings=settings, db=db, webauthn=webauthn, ethereum=ethereum)
 
     app = FastAPI(
-        title="LedgerClaw",
+        title="ClawPass",
         version="0.1.0",
         description="Dual-mode approval platform with first-class passkey onboarding.",
     )

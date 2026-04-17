@@ -1,0 +1,28 @@
+{
+  "name": "clawpass-fast",
+  "allowed_surface": [
+    ".gitignore",
+    "README.md",
+    "pyproject.toml",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docs/*",
+    "examples/*",
+    "src/ledgerclaw_server/*",
+    "src/ledgerclaw_server/*/*",
+    "src/ledgerclaw_sdk_py/*",
+    "tests/*",
+    "ts-sdk/*",
+    "ts-sdk/*/*",
+    "scripts/repo_autoresearch_eval.py",
+    "scripts/check_sdk_roundtrip.py",
+    "autoresearch/*"
+  ],
+  "benchmarks": [
+    {
+      "id": "pytest",
+      "command": "pytest -q",
+      "weight": 1.0
+    }
+  ]
+}

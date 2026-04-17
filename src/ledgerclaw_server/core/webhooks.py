@@ -26,13 +26,18 @@ class WebhookDispatcher:
 
         if callback_url:
             attempts = 1
-            headers = {"Content-Type": "application/json", "X-LedgerClaw-Event": event_type}
+            headers = {
+                "Content-Type": "application/json",
+                "X-ClawPass-Event": event_type,
+                "X-LedgerClaw-Event": event_type,
+            }
             if self._settings.webhook_secret:
                 signature = hmac.new(
                     self._settings.webhook_secret.encode("utf-8"),
                     payload_json.encode("utf-8"),
                     hashlib.sha256,
                 ).hexdigest()
+                headers["X-ClawPass-Signature"] = f"sha256={signature}"
                 headers["X-LedgerClaw-Signature"] = f"sha256={signature}"
             try:
                 with httpx.Client(timeout=self._settings.webhook_timeout_seconds) as client:
