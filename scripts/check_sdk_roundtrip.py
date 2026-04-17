@@ -37,7 +37,12 @@ def _settings(db_path: Path) -> Settings:
         webauthn_timeout_ms=60000,
         challenge_ttl_minutes=10,
         approval_default_ttl_minutes=30,
+        instance_id="sdk-roundtrip",
         webhook_timeout_seconds=1,
+        webhook_delivery_lease_seconds=30,
+        webhook_backlog_alert_threshold=1,
+        webhook_backlog_alert_after_seconds=30,
+        webhook_failure_rate_alert_threshold=0.25,
         webhook_secret=None,
     )
 
@@ -77,7 +82,13 @@ def main() -> int:
                 raise RuntimeError(f"Unexpected webhook events: {events}")
 
             summary = client.get_webhook_summary()
-            if summary["backlog_count"] != 0 or summary["redelivery_count"] != 0:
+            if (
+                summary["backlog_count"] != 0
+                or summary["stalled_backlog_count"] != 0
+                or summary["redelivery_count"] != 0
+                or summary["health_state"] != "healthy"
+                or summary["alerts"]
+            ):
                 raise RuntimeError(f"Unexpected webhook summary: {summary}")
 
             fetched = client.get_approval_request(created["id"])

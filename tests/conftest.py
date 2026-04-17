@@ -64,7 +64,12 @@ def settings(tmp_path: Path) -> Settings:
         webauthn_timeout_ms=60000,
         challenge_ttl_minutes=10,
         approval_default_ttl_minutes=30,
+        instance_id="test-instance",
         webhook_timeout_seconds=1.0,
+        webhook_delivery_lease_seconds=30,
+        webhook_backlog_alert_threshold=1,
+        webhook_backlog_alert_after_seconds=30,
+        webhook_failure_rate_alert_threshold=0.25,
         webhook_secret=None,
     )
 

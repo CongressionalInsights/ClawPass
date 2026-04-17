@@ -64,6 +64,8 @@ export type WebhookEventStatus = "queued" | "skipped" | "delivered" | "failed";
 export interface WebhookDeliverySummary {
   total_events: number;
   backlog_count: number;
+  leased_backlog_count: number;
+  stalled_backlog_count: number;
   delivered_count: number;
   failed_count: number;
   skipped_count: number;
@@ -74,7 +76,10 @@ export interface WebhookDeliverySummary {
   redelivery_delivered_count: number;
   redelivery_failed_count: number;
   oldest_queued_at: string | null;
+  oldest_stalled_at: string | null;
   last_event_at: string | null;
+  health_state: string;
+  alerts: string[];
 }
 
 export interface WebhookEventListFilters {

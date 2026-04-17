@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   status TEXT NOT NULL,
   last_error TEXT,
   attempt_count INTEGER NOT NULL DEFAULT 0,
+  lease_owner TEXT,
+  lease_expires_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -119,6 +121,9 @@ ON approval_requests(status, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_decision_challenges_request
 ON decision_challenges(request_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_status_lease_created
+ON webhook_events(status, lease_expires_at, created_at);
 """
 
 
@@ -135,7 +140,18 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
+            self._ensure_webhook_event_columns(connection)
             connection.commit()
+
+    def _ensure_webhook_event_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(webhook_events)").fetchall()}
+        if "lease_owner" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN lease_owner TEXT")
+        if "lease_expires_at" not in columns:
+            connection.execute("ALTER TABLE webhook_events ADD COLUMN lease_expires_at TEXT")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_webhook_events_status_lease_created ON webhook_events(status, lease_expires_at, created_at)"
+        )
 
     def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -151,6 +167,12 @@ class Database:
         with self.connect() as connection:
             connection.execute(query, params)
             connection.commit()
+
+    def execute_rowcount(self, query: str, params: tuple[Any, ...] = ()) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(query, params)
+            connection.commit()
+            return cursor.rowcount
 
     def execute_many(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         with self.connect() as connection:

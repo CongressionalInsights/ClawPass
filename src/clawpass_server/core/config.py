@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from clawpass_server.core.utils import stable_id
+
 
 @dataclass(slots=True)
 class Settings:
@@ -17,7 +19,12 @@ class Settings:
     webauthn_timeout_ms: int
     challenge_ttl_minutes: int
     approval_default_ttl_minutes: int
+    instance_id: str
     webhook_timeout_seconds: float
+    webhook_delivery_lease_seconds: int
+    webhook_backlog_alert_threshold: int
+    webhook_backlog_alert_after_seconds: int
+    webhook_failure_rate_alert_threshold: float
     webhook_secret: str | None
 
 
@@ -45,6 +52,19 @@ def load_settings() -> Settings:
         webauthn_timeout_ms=int(_env("CLAWPASS_WEBAUTHN_TIMEOUT_MS", "LEDGERCLAW_WEBAUTHN_TIMEOUT_MS", "60000")),
         challenge_ttl_minutes=int(_env("CLAWPASS_CHALLENGE_TTL_MINUTES", "LEDGERCLAW_CHALLENGE_TTL_MINUTES", "10")),
         approval_default_ttl_minutes=int(_env("CLAWPASS_APPROVAL_DEFAULT_TTL_MINUTES", "LEDGERCLAW_APPROVAL_DEFAULT_TTL_MINUTES", "60")),
+        instance_id=_env("CLAWPASS_INSTANCE_ID", "LEDGERCLAW_INSTANCE_ID", stable_id("instance")),
         webhook_timeout_seconds=float(_env("CLAWPASS_WEBHOOK_TIMEOUT_SECONDS", "LEDGERCLAW_WEBHOOK_TIMEOUT_SECONDS", "5")),
+        webhook_delivery_lease_seconds=int(
+            _env("CLAWPASS_WEBHOOK_DELIVERY_LEASE_SECONDS", "LEDGERCLAW_WEBHOOK_DELIVERY_LEASE_SECONDS", "30")
+        ),
+        webhook_backlog_alert_threshold=int(
+            _env("CLAWPASS_WEBHOOK_BACKLOG_ALERT_THRESHOLD", "LEDGERCLAW_WEBHOOK_BACKLOG_ALERT_THRESHOLD", "1")
+        ),
+        webhook_backlog_alert_after_seconds=int(
+            _env("CLAWPASS_WEBHOOK_BACKLOG_ALERT_AFTER_SECONDS", "LEDGERCLAW_WEBHOOK_BACKLOG_ALERT_AFTER_SECONDS", "30")
+        ),
+        webhook_failure_rate_alert_threshold=float(
+            _env("CLAWPASS_WEBHOOK_FAILURE_RATE_ALERT_THRESHOLD", "LEDGERCLAW_WEBHOOK_FAILURE_RATE_ALERT_THRESHOLD", "0.25")
+        ),
         webhook_secret=os.getenv("CLAWPASS_WEBHOOK_SECRET") or os.getenv("LEDGERCLAW_WEBHOOK_SECRET") or None,
     )

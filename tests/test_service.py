@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -18,7 +19,9 @@ from clawpass_server.core.schemas import (
     WebAuthnRegisterCompleteRequest,
     WebAuthnRegisterStartRequest,
 )
+from clawpass_server.core.database import Database
 from clawpass_server.core.utils import utc_now
+from clawpass_server.core.webhooks import WebhookDispatcher
 
 
 def _enroll_passkey(service, *, email: str, is_ledger: bool = False) -> str:
@@ -223,13 +226,13 @@ def test_webhook_delivery_does_not_retry_non_retryable_http_error(monkeypatch, s
 
 
 def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(monkeypatch, service):
-    queued_at = utc_now().isoformat().replace("+00:00", "Z")
+    queued_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
     service._db.execute(
         """
         INSERT INTO webhook_events(
-          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count, created_at, updated_at
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count, lease_owner, lease_expires_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "whevt-backlog",
@@ -240,6 +243,8 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
             "queued",
             None,
             0,
+            None,
+            None,
             queued_at,
             queued_at,
         ),
@@ -282,6 +287,8 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
     summary = service.get_webhook_delivery_summary()
     assert summary.total_events == 3
     assert summary.backlog_count == 1
+    assert summary.leased_backlog_count == 0
+    assert summary.stalled_backlog_count == 1
     assert summary.delivered_count == 1
     assert summary.failed_count == 1
     assert summary.skipped_count == 0
@@ -292,7 +299,127 @@ def test_webhook_delivery_summary_reports_backlog_failure_rate_and_redeliveries(
     assert summary.redelivery_delivered_count == 1
     assert summary.redelivery_failed_count == 0
     assert summary.oldest_queued_at == queued_at
+    assert summary.oldest_stalled_at == queued_at
     assert summary.last_event_at is not None
+    assert summary.health_state == "warning"
+    assert len(summary.alerts) == 2
+    assert "stalled event" in summary.alerts[0]
+    assert "failure rate" in summary.alerts[1]
+
+
+def test_webhook_delivery_lease_prevents_duplicate_multi_instance_delivery(monkeypatch, settings):
+    db = Database(settings.db_path)
+    db.ensure_ready()
+    now = utc_now().isoformat().replace("+00:00", "Z")
+    db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count, lease_owner, lease_expires_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-shared",
+            "req-shared",
+            "approval.pending",
+            json.dumps({"request_id": "req-shared"}),
+            "https://example.com/webhooks",
+            "queued",
+            None,
+            0,
+            None,
+            None,
+            now,
+            now,
+        ),
+    )
+
+    dispatcher_a = WebhookDispatcher(db, settings)
+    dispatcher_b = WebhookDispatcher(db, replace(settings, instance_id="test-instance-b"))
+    tasks = []
+    calls = {"count": 0}
+
+    class RecordingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            calls["count"] += 1
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
+    monkeypatch.setattr(dispatcher_a, "_launch_delivery_task", lambda task: tasks.append(task))
+    monkeypatch.setattr(dispatcher_b, "_launch_delivery_task", lambda task: tasks.append(task))
+
+    assert dispatcher_a.recover_queued_events() == 1
+    assert dispatcher_b.recover_queued_events() == 1
+    assert len(tasks) == 2
+
+    tasks[0]()
+    tasks[1]()
+
+    row = db.fetchone("SELECT * FROM webhook_events WHERE id = ?", ("whevt-shared",))
+    assert calls["count"] == 1
+    assert row["status"] == "delivered"
+    assert row["attempt_count"] == 1
+    assert row["lease_owner"] is None
+    assert row["lease_expires_at"] is None
+
+
+def test_recover_queued_webhook_reclaims_expired_lease(monkeypatch, service):
+    expired_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    service._db.execute(
+        """
+        INSERT INTO webhook_events(
+          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count, lease_owner, lease_expires_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "whevt-expired-lease",
+            "req-expired-lease",
+            "approval.pending",
+            json.dumps({"request_id": "req-expired-lease"}),
+            "https://example.com/webhooks",
+            "queued",
+            None,
+            0,
+            "dead-instance",
+            expired_at,
+            created_at,
+            created_at,
+        ),
+    )
+
+    class RecordingClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, *, content, headers):
+            return httpx.Response(204, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
+    monkeypatch.setattr(service._webhooks, "_launch_delivery_task", lambda task: task())
+
+    assert service.recover_queued_webhook_events() == 1
+    event = service.list_webhook_events("req-expired-lease")[0]
+    assert event.status == "delivered"
+    row = service._db.fetchone("SELECT * FROM webhook_events WHERE id = ?", ("whevt-expired-lease",))
+    assert row["lease_owner"] is None
+    assert row["lease_expires_at"] is None
 
 
 def test_list_webhook_events_supports_status_event_type_and_cursor(monkeypatch, service):

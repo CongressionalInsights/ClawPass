@@ -129,7 +129,13 @@ async function main(): Promise<void> {
     }
 
     const summary = await client.getWebhookSummary();
-    if (summary.backlog_count !== 0 || summary.redelivery_count !== 0) {
+    if (
+      summary.backlog_count !== 0 ||
+      summary.stalled_backlog_count !== 0 ||
+      summary.redelivery_count !== 0 ||
+      summary.health_state !== "healthy" ||
+      summary.alerts.length !== 0
+    ) {
       throw new Error(`unexpected webhook summary: ${JSON.stringify(summary)}`);
     }
 
