@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ledgerclaw_server.core.constants import RISK_HIGH
+from clawpass_server.core.constants import RISK_HIGH
 
 
 @dataclass(slots=True)

@@ -7,7 +7,7 @@ from typing import Any
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 
-from ledgerclaw_server.core.utils import json_dumps, token_urlsafe, utc_now_iso
+from clawpass_server.core.utils import json_dumps, token_urlsafe, utc_now_iso
 
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"

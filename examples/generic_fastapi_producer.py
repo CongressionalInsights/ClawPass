@@ -5,7 +5,7 @@ import json
 
 from fastapi import FastAPI, HTTPException
 
-from ledgerclaw_sdk_py import ClawPassClient
+from clawpass_sdk_py import ClawPassClient
 
 app = FastAPI(title="ClawPass Generic Producer Example")
 clawpass = ClawPassClient("http://localhost:8081")

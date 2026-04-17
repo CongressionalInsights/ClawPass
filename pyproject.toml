@@ -25,18 +25,18 @@ dev = [
 ]
 
 [project.scripts]
-clawpass-server = "ledgerclaw_server.main:main"
-ledgerclaw-server = "ledgerclaw_server.main:main"
+clawpass-server = "clawpass_server.main:main"
+ledgerclaw-server = "clawpass_server.main:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["ledgerclaw_server*", "ledgerclaw_sdk_py*"]
+include = ["clawpass_server*", "clawpass_sdk_py*", "ledgerclaw_server*", "ledgerclaw_sdk_py*"]
 
 [tool.setuptools.package-data]
-ledgerclaw_server = ["web/*"]
+clawpass_server = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

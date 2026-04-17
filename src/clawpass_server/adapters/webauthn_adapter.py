@@ -22,7 +22,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from ledgerclaw_server.core.config import Settings
+from clawpass_server.core.config import Settings
 
 
 @dataclass(slots=True)
