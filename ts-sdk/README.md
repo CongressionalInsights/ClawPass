@@ -11,9 +11,12 @@ npm install clawpass-sdk
 ```ts
 import { ClawPassClient } from "clawpass-sdk";
 
-const client = new ClawPassClient({ baseUrl: "http://localhost:8081" });
+const client = new ClawPassClient({
+  baseUrl: "http://localhost:8081",
+  apiKey: "cpk_<key_id>.<secret>",
+});
 
-const request = await client.createApprovalRequest({
+const request = await client.createGatedAction({
   request_id: "deploy-prod-2026-04-17",
   action_type: "outbound.send",
   action_hash: "sha256:...",
@@ -21,25 +24,29 @@ const request = await client.createApprovalRequest({
   callback_url: "https://producer.example/webhooks/clawpass",
 });
 
-const current = await client.getApprovalRequest(request.id);
-console.log(current.status);
+const terminal = await client.waitForFinalDecision(request.id);
+if (terminal.status === "APPROVED") {
+  client.verifyApprovedRequest(terminal, {
+    requestId: request.id,
+    actionHash: request.action_hash,
+    producerId: request.producer_id ?? undefined,
+  });
+}
 ```
 
-## Common methods
+## Producer methods
 
+- `createGatedAction(payload)`
 - `createApprovalRequest(payload)`
 - `getApprovalRequest(requestId)`
 - `listApprovalRequests(status?)`
 - `cancelApprovalRequest(requestId, reason?)`
-- `listWebhookEvents(filters?)`
-- `getWebhookSummary()`
-- `listWebhookEndpointSummaries(limit?)`
-- `muteWebhookEndpoint(callbackUrl, options?)`
-- `unmuteWebhookEndpoint(callbackUrl)`
-- `pruneWebhookEvents()`
-- `getWebhookPruneHistory(limit?)`
-- `redeliverWebhookEvent(eventId)`
-- `retryWebhookEventNow(eventId)`
+- `waitForFinalDecision(requestId, options?)`
+- `verifyApprovedRequest(request, expected?)`
+
+## Advanced operator methods
+
+The client also exposes webhook and operator helpers, but those routes require the authenticated operator session rather than a producer API key. To use them, pass the browser session cookie and CSRF header through `headers`.
 
 ## More guidance
 

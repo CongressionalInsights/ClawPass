@@ -88,6 +88,14 @@ Even after signature verification, callback consumers should still:
 
 ## Operator API surfaces
 
+These routes are operator routes, not producer routes.
+
+Authentication model:
+- `GET` routes require an authenticated admin session cookie
+- `POST` routes require the admin session cookie plus the matching `X-ClawPass-CSRF` header
+- the canonical session cookie is `clawpass_session`
+- the built-in `/app` UI is the primary operator surface for these actions
+
 ### Event listing
 
 `GET /v1/webhook-events`
@@ -137,9 +145,7 @@ Useful for:
 
 The built-in UI now supports:
 - top-level webhook health summary
-- attention / failed / stalled event filters
 - endpoint health cards
-- endpoint-scoped inspection
 - endpoint mute and resume actions
 - manual prune action
 - prune-history review

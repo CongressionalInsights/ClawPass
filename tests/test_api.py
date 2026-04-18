@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -13,9 +11,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from clawpass_server.app import create_app
+from clawpass_server.core.auth import ADMIN_CSRF_COOKIE
 from clawpass_server.core.config import Settings
-from clawpass_server.core.database import Database
-from clawpass_server.core.utils import utc_now
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -23,6 +20,7 @@ def _settings(tmp_path: Path) -> Settings:
         db_path=tmp_path / "api.db",
         host="127.0.0.1",
         port=8081,
+        base_url="http://localhost:8081",
         rp_id="localhost",
         rp_name="ClawPass",
         expected_origin="http://localhost:8081",
@@ -30,7 +28,12 @@ def _settings(tmp_path: Path) -> Settings:
         webauthn_timeout_ms=60000,
         challenge_ttl_minutes=10,
         approval_default_ttl_minutes=30,
+        admin_session_ttl_minutes=720,
         instance_id="api-test-instance",
+        session_secret="test-session-secret",
+        session_secret_configured=True,
+        bootstrap_token="bootstrap-secret",
+        deployment_mode="development",
         webhook_timeout_seconds=1,
         webhook_delivery_lease_seconds=30,
         webhook_retry_poll_seconds=0,
@@ -49,29 +52,51 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-def test_api_flow_with_mocked_webauthn(monkeypatch, tmp_path: Path):
+def _mock_webauthn(monkeypatch) -> None:
     from clawpass_server.adapters import webauthn_adapter
-
-    class DummyRegistration:
-        credential_id = "cred-api"
-        credential_public_key = "pub-key"
-        sign_count = 0
-        aaguid = None
 
     monkeypatch.setattr(
         webauthn_adapter.WebAuthnAdapter,
         "generate_registration",
-        lambda self, **kwargs: ({"challenge": "abc", "user": {"id": "dGVzdA", "name": kwargs["user_name"]}}, "abc"),
+        lambda self, **kwargs: (
+            {
+                "challenge": "reg-challenge",
+                "user": {
+                    "id": "dGVzdA",
+                    "name": kwargs["user_name"],
+                    "displayName": kwargs["user_display_name"],
+                },
+                "rp": {"id": "localhost", "name": "ClawPass"},
+                "excludeCredentials": [],
+            },
+            "reg-challenge",
+        ),
     )
     monkeypatch.setattr(
         webauthn_adapter.WebAuthnAdapter,
         "verify_registration",
-        lambda self, **kwargs: DummyRegistration(),
+        lambda self, **kwargs: type(
+            "DummyRegistration",
+            (),
+            {
+                "credential_id": kwargs["credential"]["id"],
+                "credential_public_key": "pub-key",
+                "sign_count": 0,
+                "aaguid": None,
+            },
+        )(),
     )
     monkeypatch.setattr(
         webauthn_adapter.WebAuthnAdapter,
         "generate_authentication",
-        lambda self, **kwargs: ({"challenge": "def", "allowCredentials": [{"id": "cred-api"}]}, "def"),
+        lambda self, **kwargs: (
+            {
+                "challenge": "auth-challenge",
+                "allowCredentials": [{"id": credential_id} for credential_id in kwargs["allowed_credential_ids"]],
+                "rpId": "localhost",
+            },
+            "auth-challenge",
+        ),
     )
     monkeypatch.setattr(
         webauthn_adapter.WebAuthnAdapter,
@@ -79,758 +104,332 @@ def test_api_flow_with_mocked_webauthn(monkeypatch, tmp_path: Path):
         lambda self, **kwargs: kwargs["credential_current_sign_count"] + 1,
     )
 
-    client = TestClient(create_app(_settings(tmp_path)))
 
-    root = client.get("/")
-    assert root.status_code == 200
-    assert "ClawPass" in root.text
+def _csrf_headers(client: TestClient) -> dict[str, str]:
+    return {"X-ClawPass-CSRF": client.cookies[ADMIN_CSRF_COOKIE]}
 
+
+def _bootstrap_admin(client: TestClient) -> dict[str, str]:
     start = client.post(
-        "/v1/webauthn/register/start",
-        json={"email": "api@example.org", "display_name": "Api User"},
+        "/v1/setup/bootstrap/start",
+        json={
+            "bootstrap_token": "bootstrap-secret",
+            "email": "admin@example.org",
+            "display_name": "Admin",
+        },
     )
     assert start.status_code == 200
-    start_payload = start.json()
 
     complete = client.post(
-        "/v1/webauthn/register/complete",
-        json={"session_id": start_payload["session_id"], "credential": {"id": "cred-api"}},
+        "/v1/setup/bootstrap/complete",
+        json={
+            "session_id": start.json()["session_id"],
+            "credential": {"id": "cred-admin"},
+            "label": "Primary passkey",
+        },
     )
     assert complete.status_code == 200
-    approver_id = complete.json()["approver_id"]
+    return complete.json()
 
-    create_request = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "email.send", "action_hash": "sha256:api", "risk_level": "high"},
+
+def _create_producer_key(client: TestClient, *, name: str) -> tuple[dict[str, str], str]:
+    producer = client.post(
+        "/v1/operator/producers",
+        json={"name": name, "description": f"{name} description"},
+        headers=_csrf_headers(client),
     )
-    assert create_request.status_code == 200
-    req = create_request.json()
+    assert producer.status_code == 200
 
-    start_decision = client.post(
-        f"/v1/approval-requests/{req['id']}/decision/start",
-        json={"approver_id": approver_id, "decision": "APPROVE", "method": "webauthn"},
+    key = client.post(
+        f"/v1/operator/producers/{producer.json()['id']}/keys",
+        json={"label": f"{name} key"},
+        headers=_csrf_headers(client),
     )
-    assert start_decision.status_code == 200
-    challenge = start_decision.json()
-
-    done = client.post(
-        f"/v1/approval-requests/{req['id']}/decision/complete",
-        json={"challenge_id": challenge["challenge_id"], "proof": {"credential": {"id": "cred-api"}}},
-    )
-    assert done.status_code == 200
-    assert done.json()["request"]["status"] == "APPROVED"
+    assert key.status_code == 200
+    return producer.json(), key.json()["api_key"]
 
 
-def test_list_approval_requests_status_filter_expires_stale_pending_items(tmp_path: Path):
-    settings = _settings(tmp_path)
-    client = TestClient(create_app(settings))
-
-    active = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:pending", "risk_level": "low"},
-    )
-    assert active.status_code == 200
-
-    expired = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:expired", "risk_level": "low"},
-    )
-    assert expired.status_code == 200
-    expired_id = expired.json()["id"]
-
-    expired_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
-    Database(settings.db_path).execute(
-        "UPDATE approval_requests SET expires_at = ? WHERE id = ?",
-        (expired_at, expired_id),
-    )
-
-    pending = client.get("/v1/approval-requests", params={"status": "PENDING"})
-    assert pending.status_code == 200
-    pending_ids = {request["id"] for request in pending.json()}
-    assert active.json()["id"] in pending_ids
-    assert expired_id not in pending_ids
-
-    expired_list = client.get("/v1/approval-requests", params={"status": "EXPIRED"})
-    assert expired_list.status_code == 200
-    expired_ids = {request["id"] for request in expired_list.json()}
-    assert expired_id in expired_ids
-    assert active.json()["id"] not in expired_ids
-
-
-def test_cancel_request_emits_cancelled_webhook_event(tmp_path: Path):
-    client = TestClient(create_app(_settings(tmp_path)))
-
-    created = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:cancel", "risk_level": "low"},
-    )
-    assert created.status_code == 200
-    request_id = created.json()["id"]
-
-    cancelled = client.post(
-        f"/v1/approval-requests/{request_id}/cancel",
-        json={"reason": "operator cancelled"},
-    )
-    assert cancelled.status_code == 200
-    assert cancelled.json()["status"] == "CANCELLED"
-
-    events = client.get("/v1/webhook-events", params={"request_id": request_id})
-    assert events.status_code == 200
-    event_types = {event["event_type"] for event in events.json()}
-    assert "approval.pending" in event_types
-    assert "approval.cancelled" in event_types
-
-
-def test_duplicate_request_id_returns_conflict(tmp_path: Path):
-    client = TestClient(create_app(_settings(tmp_path)))
+def _create_request(client: TestClient, api_key: str, **overrides) -> dict[str, str]:
     payload = {
-        "request_id": "req-fixed-id",
-        "action_type": "digest.publish",
-        "action_hash": "sha256:first",
-        "risk_level": "low",
+        "request_id": "req-1",
+        "action_type": "email.send",
+        "action_hash": "sha256:abc123",
+        "requester_id": "agent-run-1",
+        "risk_level": "high",
+        "callback_url": "https://example.com/webhooks",
+    }
+    payload.update(overrides)
+    response = client.post(
+        "/v1/approval-requests",
+        json=payload,
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def _login_as(client: TestClient, *, email: str, credential_id: str) -> dict[str, str]:
+    start = client.post("/v1/auth/login/start", json={"email": email})
+    assert start.status_code == 200
+    complete = client.post(
+        "/v1/auth/login/complete",
+        json={"session_id": start.json()["session_id"], "credential": {"id": credential_id}},
+    )
+    assert complete.status_code == 200
+    return complete.json()
+
+
+def test_fresh_install_routes_to_setup_and_reports_bootstrap_status(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302
+    assert root.headers["location"] == "/setup"
+
+    setup_status = client.get("/v1/setup/status")
+    assert setup_status.status_code == 200
+    assert setup_status.json() == {
+        "initialized": False,
+        "bootstrap_configured": True,
     }
 
-    created = client.post("/v1/approval-requests", json=payload)
-    assert created.status_code == 200
 
-    duplicate = client.post(
-        "/v1/approval-requests",
-        json={**payload, "action_hash": "sha256:second"},
-    )
-    assert duplicate.status_code == 409
-    assert "already exists" in duplicate.json()["detail"]
-
-
-def test_invalid_expires_at_returns_bad_request(tmp_path: Path):
+def test_bootstrap_logout_and_passkey_login_flow(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
     client = TestClient(create_app(_settings(tmp_path)))
 
-    response = client.post(
-        "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:bad-expiry",
-            "risk_level": "low",
-            "expires_at": "not-a-timestamp",
-        },
+    bootstrap = _bootstrap_admin(client)
+    assert bootstrap["email"] == "admin@example.org"
+    assert bootstrap["passkey_count"] == 1
+
+    session = client.get("/v1/admin/session")
+    assert session.status_code == 200
+    assert session.json()["approver_id"] == bootstrap["approver_id"]
+
+    app_redirect = client.get("/", follow_redirects=False)
+    assert app_redirect.status_code == 302
+    assert app_redirect.headers["location"] == "/app"
+
+    logout = client.post("/v1/auth/logout")
+    assert logout.status_code == 200
+
+    locked = client.get("/app", follow_redirects=False)
+    assert locked.status_code == 302
+    assert locked.headers["location"] == "/login"
+
+    login_start = client.post("/v1/auth/admin/login/start")
+    assert login_start.status_code == 200
+
+    login_complete = client.post(
+        "/v1/auth/admin/login/complete",
+        json={"session_id": login_start.json()["session_id"], "credential": {"id": "cred-admin"}},
     )
-    assert response.status_code == 400
-    assert "valid ISO 8601" in response.json()["detail"]
+    assert login_complete.status_code == 200
+    assert login_complete.json()["email"] == "admin@example.org"
 
 
-def test_naive_expires_at_is_treated_as_utc(tmp_path: Path):
-    client = TestClient(create_app(_settings(tmp_path)))
-    future_naive = (utc_now() + timedelta(minutes=5)).replace(tzinfo=None).isoformat(timespec="seconds")
+def test_producer_api_keys_gate_request_creation_and_scope_reads(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
+    settings = _settings(tmp_path)
+    admin_client = TestClient(create_app(settings))
+    _bootstrap_admin(admin_client)
 
-    response = client.post(
+    producer_a, api_key_a = _create_producer_key(admin_client, name="producer-a")
+    producer_b, api_key_b = _create_producer_key(admin_client, name="producer-b")
+    producer_client = TestClient(create_app(settings))
+
+    missing_auth = producer_client.post(
         "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:naive-expiry",
-            "risk_level": "low",
-            "expires_at": future_naive,
-        },
+        json={"action_type": "email.send", "action_hash": "sha256:no-auth", "risk_level": "high"},
     )
-    assert response.status_code == 200
-    assert response.json()["expires_at"].endswith("Z")
+    assert missing_auth.status_code == 401
 
+    created = _create_request(producer_client, api_key_a, request_id="req-producer-a")
+    assert created["producer_id"] == producer_a["id"]
+    assert created["approval_url"].endswith(f"/approve/{created['id']}")
 
-def test_list_approval_requests_status_filter_is_case_insensitive_and_validated(tmp_path: Path):
-    client = TestClient(create_app(_settings(tmp_path)))
+    producer_get = producer_client.get(
+        f"/v1/approval-requests/{created['id']}",
+        headers={"Authorization": f"Bearer {api_key_a}"},
+    )
+    assert producer_get.status_code == 200
+    assert producer_get.json()["id"] == created["id"]
 
-    created = client.post(
+    cross_producer_get = producer_client.get(
+        f"/v1/approval-requests/{created['id']}",
+        headers={"Authorization": f"Bearer {api_key_b}"},
+    )
+    assert cross_producer_get.status_code == 404
+
+    producer_list = producer_client.get(
         "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:pending", "risk_level": "low"},
+        headers={"Authorization": f"Bearer {api_key_a}"},
     )
-    assert created.status_code == 200
-    created_id = created.json()["id"]
+    assert producer_list.status_code == 200
+    assert [item["id"] for item in producer_list.json()] == [created["id"]]
 
-    pending = client.get("/v1/approval-requests", params={"status": "pending"})
-    assert pending.status_code == 200
-    pending_ids = {request["id"] for request in pending.json()}
-    assert created_id in pending_ids
-
-    invalid = client.get("/v1/approval-requests", params={"status": "unknown"})
-    assert invalid.status_code == 400
-    assert "Unsupported status" in invalid.json()["detail"]
+    assert producer_b["id"] != producer_a["id"]
 
 
-def test_webhook_events_support_filters_and_redelivery(monkeypatch, tmp_path: Path):
-    deliveries = {"count": 0}
+def test_admin_can_approve_producer_request_and_producer_observes_approved_state(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
+    settings = _settings(tmp_path)
+    admin_client = TestClient(create_app(settings))
+    _bootstrap_admin(admin_client)
+    producer, api_key = _create_producer_key(admin_client, name="mail-agent")
+    producer_client = TestClient(create_app(settings))
 
-    class FlakyClient:
-        def __init__(self, *args, **kwargs):
-            return None
+    created = _create_request(producer_client, api_key, request_id="req-approve")
+    assert created["producer_id"] == producer["id"]
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, *, content, headers):
-            deliveries["count"] += 1
-            request = httpx.Request("POST", url)
-            if deliveries["count"] == 1:
-                response = httpx.Response(400, request=request)
-                raise httpx.HTTPStatusError("bad request", request=request, response=response)
-            return httpx.Response(204, request=request)
-
-    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
-
-    client = TestClient(create_app(_settings(tmp_path)))
-    created = client.post(
-        "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:webhook-api",
-            "risk_level": "low",
-            "callback_url": "https://example.com/webhooks",
-        },
+    start = admin_client.post(
+        f"/v1/approval-requests/{created['id']}/decision/start",
+        json={"decision": "APPROVE", "method": "webauthn"},
+        headers=_csrf_headers(admin_client),
     )
-    assert created.status_code == 200
-    request_id = created.json()["id"]
+    assert start.status_code == 200
 
-    failed = client.get(
+    complete = admin_client.post(
+        f"/v1/approval-requests/{created['id']}/decision/complete",
+        json={"challenge_id": start.json()["challenge_id"], "proof": {"credential": {"id": "cred-admin"}}},
+        headers=_csrf_headers(admin_client),
+    )
+    assert complete.status_code == 200
+    assert complete.json()["request"]["status"] == "APPROVED"
+    assert complete.json()["request"]["approver_id"] is not None
+
+    producer_view = producer_client.get(
+        f"/v1/approval-requests/{created['id']}",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    assert producer_view.status_code == 200
+    assert producer_view.json()["status"] == "APPROVED"
+
+    webhook_events = admin_client.get(
         "/v1/webhook-events",
-        params={"request_id": request_id, "status": "FAILED", "event_type": "approval.pending"},
+        params={"request_id": created["id"]},
     )
-    assert failed.status_code == 200
-    failed_events = failed.json()
-    assert len(failed_events) == 1
-    assert failed_events[0]["status"] == "failed"
-
-    redelivered = client.post(f"/v1/webhook-events/{failed_events[0]['id']}/redeliver")
-    assert redelivered.status_code == 200
-    assert redelivered.json()["id"] != failed_events[0]["id"]
-    assert redelivered.json()["status"] == "queued"
-
-    delivered = client.get(
-        "/v1/webhook-events",
-        params={"request_id": request_id, "status": "delivered", "event_type": "approval.pending"},
-    )
-    assert delivered.status_code == 200
-    delivered_ids = {event["id"] for event in delivered.json()}
-    assert redelivered.json()["id"] in delivered_ids
+    assert webhook_events.status_code == 200
+    event_types = {event["event_type"] for event in webhook_events.json()}
+    assert event_types == {"approval.pending", "approval.approved"}
 
 
-def test_webhook_events_support_limit_and_cursor(tmp_path: Path):
-    client = TestClient(create_app(_settings(tmp_path)))
-
-    first = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:first", "risk_level": "low"},
-    )
-    second = client.post(
-        "/v1/approval-requests",
-        json={"action_type": "digest.publish", "action_hash": "sha256:second", "risk_level": "low"},
-    )
-    assert first.status_code == 200
-    assert second.status_code == 200
-
-    page_one = client.get("/v1/webhook-events", params={"status": "skipped", "limit": 1})
-    assert page_one.status_code == 200
-    page_one_payload = page_one.json()
-    assert len(page_one_payload) == 1
-
-    page_two = client.get(
-        "/v1/webhook-events",
-        params={"status": "skipped", "limit": 10, "cursor": page_one_payload[0]["id"]},
-    )
-    assert page_two.status_code == 200
-    page_two_ids = {event["id"] for event in page_two.json()}
-    assert page_one_payload[0]["id"] not in page_two_ids
-
-
-def test_app_startup_recovers_queued_webhooks(monkeypatch, tmp_path: Path):
+def test_operator_routes_require_admin_session_and_csrf(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
     settings = _settings(tmp_path)
-    captured_headers: list[dict[str, str]] = []
+    admin_client = TestClient(create_app(settings))
+    _bootstrap_admin(admin_client)
+    _, api_key = _create_producer_key(admin_client, name="ops-agent")
+    created = _create_request(admin_client, api_key, request_id="req-webhook")
 
-    class RecordingClient:
-        def __init__(self, *args, **kwargs):
-            return None
+    anonymous_client = TestClient(create_app(settings))
 
-        def __enter__(self):
-            return self
+    events = anonymous_client.get("/v1/webhook-events", params={"request_id": created["id"]})
+    assert events.status_code == 401
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, *, content, headers):
-            captured_headers.append(headers)
-            return httpx.Response(204, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
-
-    first_client = TestClient(create_app(settings))
-    created = first_client.post(
-        "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:recover-startup",
-            "risk_level": "low",
-            "callback_url": "https://example.com/webhooks",
-        },
-    )
-    assert created.status_code == 200
-    request_id = created.json()["id"]
-
-    queued = first_client.get("/v1/webhook-events", params={"request_id": request_id, "status": "queued"})
-    assert queued.status_code == 200
-    queued_event = queued.json()[0]
-    first_client.close()
-
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
-    second_client = TestClient(create_app(settings))
-    recovered = second_client.get("/v1/webhook-events", params={"request_id": request_id})
-    assert recovered.status_code == 200
-    recovered_event = recovered.json()[0]
-    second_client.close()
-
-    assert recovered_event["status"] == "delivered"
-    assert recovered_event["attempt_count"] == 1
-    assert captured_headers[0]["X-ClawPass-Webhook-Id"] == queued_event["id"]
-    assert captured_headers[0]["X-LedgerClaw-Webhook-Id"] == queued_event["id"]
-
-
-def test_webhook_summary_reports_failure_rate_and_redelivery_outcomes(monkeypatch, tmp_path: Path):
-    deliveries = {"count": 0}
-
-    class FlakyClient:
-        def __init__(self, *args, **kwargs):
-            return None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, *, content, headers):
-            deliveries["count"] += 1
-            request = httpx.Request("POST", url)
-            if deliveries["count"] == 1:
-                response = httpx.Response(400, request=request)
-                raise httpx.HTTPStatusError("bad request", request=request, response=response)
-            return httpx.Response(204, request=request)
-
-    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FlakyClient)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
-
-    client = TestClient(create_app(_settings(tmp_path)))
-    created = client.post(
-        "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:webhook-summary-api",
-            "risk_level": "low",
-            "callback_url": "https://example.com/webhooks",
-        },
-    )
-    assert created.status_code == 200
-    request_id = created.json()["id"]
-    failed_event = client.get(
-        "/v1/webhook-events",
-        params={"request_id": request_id, "status": "failed", "event_type": "approval.pending"},
-    )
-    assert failed_event.status_code == 200
-    failed_event_id = failed_event.json()[0]["id"]
-
-    redelivered = client.post(f"/v1/webhook-events/{failed_event_id}/redeliver")
-    assert redelivered.status_code == 200
-
-    summary = client.get("/v1/webhook-summary")
-    assert summary.status_code == 200
-    payload = summary.json()
-    assert payload["backlog_count"] == 0
-    assert payload["leased_backlog_count"] == 0
-    assert payload["stalled_backlog_count"] == 0
-    assert payload["scheduled_retry_count"] == 0
-    assert payload["dead_lettered_count"] == 0
-    assert payload["delivered_count"] == 1
-    assert payload["failed_count"] == 1
-    assert payload["attempted_count"] == 2
-    assert payload["failure_rate"] == 0.5
-    assert payload["redelivery_count"] == 1
-    assert payload["redelivery_backlog_count"] == 0
-    assert payload["redelivery_delivered_count"] == 1
-    assert payload["redelivery_failed_count"] == 0
-    assert payload["last_event_at"] is not None
-    assert payload["health_state"] == "warning"
-    assert len(payload["alerts"]) == 1
-    assert "failure rate" in payload["alerts"][0]
-
-
-def test_webhook_summary_reports_dead_lettered_failures(monkeypatch, tmp_path: Path):
-    settings = _settings(tmp_path)
-    settings.webhook_auto_retry_limit = 0
-    settings.webhook_auto_retry_base_delay_seconds = 0
-    settings.webhook_auto_retry_max_delay_seconds = 0
-    settings.webhook_auto_retry_jitter_seconds = 0
-
-    class FailingClient:
-        def __init__(self, *args, **kwargs):
-            return None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, url, *, content, headers):
-            request = httpx.Request("POST", url)
-            response = httpx.Response(503, request=request)
-            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
-
-    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", FailingClient)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
-
-    client = TestClient(create_app(settings))
-    created = client.post(
-        "/v1/approval-requests",
-        json={
-            "action_type": "digest.publish",
-            "action_hash": "sha256:webhook-dead-letter-api",
-            "risk_level": "low",
-            "callback_url": "https://example.com/webhooks",
-        },
-    )
-    assert created.status_code == 200
-    request_id = created.json()["id"]
-
-    failed = client.get("/v1/webhook-events", params={"request_id": request_id, "status": "failed"})
-    assert failed.status_code == 200
-    assert failed.json()[0]["dead_lettered_at"] is not None
-    assert "retry budget exhausted" in failed.json()[0]["dead_letter_reason"]
-
-    summary = client.get("/v1/webhook-summary")
-    assert summary.status_code == 200
-    payload = summary.json()
-    assert payload["dead_lettered_count"] == 1
-    assert any("dead-lettered" in alert for alert in payload["alerts"])
-
-
-def test_webhook_endpoint_summary_groups_events_by_callback_url(tmp_path: Path):
-    settings = _settings(tmp_path)
-    client = TestClient(create_app(settings))
-    db = Database(settings.db_path)
-    now = utc_now()
-    future_available_at = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
-    created_at = now.isoformat().replace("+00:00", "Z")
-    db.execute_many(
-        [
-            (
-                """
-                INSERT INTO webhook_events(
-                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-                  dead_letter_reason, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "whevt-endpoint-api-failed",
-                    "req-endpoint-api",
-                    "approval.pending",
-                    '{"request_id":"req-endpoint-api"}',
-                    "https://example.com/webhooks/a",
-                    "failed",
-                    "timeout",
-                    2,
-                    None,
-                    None,
-                    None,
-                    None,
-                    1,
-                    created_at,
-                    "Automatic retry budget exhausted after 1 queued retry.",
-                    created_at,
-                    created_at,
-                ),
-            ),
-            (
-                """
-                INSERT INTO webhook_events(
-                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-                  dead_letter_reason, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "whevt-endpoint-api-queued",
-                    "req-endpoint-api",
-                    "approval.pending",
-                    '{"request_id":"req-endpoint-api"}',
-                    "https://example.com/webhooks/a",
-                    "queued",
-                    None,
-                    0,
-                    None,
-                    None,
-                    future_available_at,
-                    "whevt-endpoint-api-failed",
-                    2,
-                    None,
-                    None,
-                    created_at,
-                    created_at,
-                ),
-            ),
-            (
-                """
-                INSERT INTO webhook_events(
-                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-                  dead_letter_reason, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "whevt-endpoint-api-ok",
-                    "req-endpoint-api-ok",
-                    "approval.pending",
-                    '{"request_id":"req-endpoint-api-ok"}',
-                    "https://example.com/webhooks/b",
-                    "delivered",
-                    None,
-                    1,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                    None,
-                    None,
-                    created_at,
-                    created_at,
-                ),
-            ),
-        ]
-    )
-
-    response = client.get("/v1/webhook-endpoints/summary", params={"limit": 10})
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload[0]["callback_url"] == "https://example.com/webhooks/a"
-    assert payload[0]["health_state"] == "critical"
-    assert payload[0]["dead_lettered_count"] == 1
-    assert payload[0]["queued_count"] == 1
-    assert payload[0]["next_attempt_at"] == future_available_at
-    assert payload[0]["latest_error"] == "timeout"
-    assert payload[1]["callback_url"] == "https://example.com/webhooks/b"
-
-
-def test_prune_webhook_events_endpoint_removes_old_history(tmp_path: Path):
-    settings = _settings(tmp_path)
-    client = TestClient(create_app(settings))
-    db = Database(settings.db_path)
-    old_delivered_at = (utc_now() - timedelta(days=20)).isoformat().replace("+00:00", "Z")
-    db.execute(
-        """
-        INSERT INTO webhook_events(
-          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-          dead_letter_reason, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "whevt-prune-api-old",
-            "req-prune-api-old",
-            "approval.pending",
-            '{"request_id":"req-prune-api-old"}',
-            "https://example.com/webhooks/prune",
-            "delivered",
-            None,
-            1,
-            None,
-            None,
-            None,
-            None,
-            0,
-            None,
-            None,
-            old_delivered_at,
-            old_delivered_at,
-        ),
-    )
-
-    pruned = client.post("/v1/webhook-events/prune", json={})
-    assert pruned.status_code == 200
-    payload = pruned.json()
-    assert payload["deleted_delivered_or_skipped"] == 1
-    assert payload["total_deleted"] == 1
-
-    remaining = client.get("/v1/webhook-events", params={"request_id": "req-prune-api-old"})
-    assert remaining.status_code == 200
-    assert remaining.json() == []
-
-
-def test_webhook_endpoint_controls_filters_and_prune_history(monkeypatch, tmp_path: Path):
-    settings = _settings(tmp_path)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
-    client = TestClient(create_app(settings))
-    db = Database(settings.db_path)
-    callback_url = "https://example.com/webhooks/operator"
-    due_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
-    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
-    old_delivered_at = (utc_now() - timedelta(days=20)).isoformat().replace("+00:00", "Z")
-    db.execute_many(
-        [
-            (
-                """
-                INSERT INTO webhook_events(
-                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-                  dead_letter_reason, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "whevt-operator-queued",
-                    "req-operator-queued",
-                    "approval.pending",
-                    '{"request_id":"req-operator-queued"}',
-                    callback_url,
-                    "queued",
-                    None,
-                    0,
-                    None,
-                    None,
-                    due_at,
-                    None,
-                    0,
-                    None,
-                    None,
-                    created_at,
-                    created_at,
-                ),
-            ),
-            (
-                """
-                INSERT INTO webhook_events(
-                  id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-                  lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, dead_lettered_at,
-                  dead_letter_reason, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "whevt-operator-old",
-                    "req-operator-old",
-                    "approval.pending",
-                    '{"request_id":"req-operator-old"}',
-                    callback_url,
-                    "delivered",
-                    None,
-                    1,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                    None,
-                    None,
-                    old_delivered_at,
-                    old_delivered_at,
-                ),
-            ),
-        ]
-    )
-
-    muted = client.post(
+    mute = anonymous_client.post(
         "/v1/webhook-endpoints/mute",
-        json={"callback_url": callback_url, "muted_for_seconds": 300, "reason": "operator pause"},
+        json={"callback_url": "https://example.com/webhooks", "reason": "pause"},
     )
-    assert muted.status_code == 200
-    muted_payload = muted.json()
-    assert muted_payload["callback_url"] == callback_url
-    assert muted_payload["mute_reason"] == "operator pause"
-    assert muted_payload["muted_until"] is not None
+    assert mute.status_code == 401
 
-    filtered = client.get("/v1/webhook-events", params={"callback_url": callback_url, "limit": 10})
-    assert filtered.status_code == 200
-    filtered_ids = {event["id"] for event in filtered.json()}
-    assert filtered_ids == {"whevt-operator-queued", "whevt-operator-old"}
-
-    summaries = client.get("/v1/webhook-endpoints/summary", params={"limit": 10})
-    assert summaries.status_code == 200
-    summary = next(item for item in summaries.json() if item["callback_url"] == callback_url)
-    assert summary["muted_until"] is not None
-    assert summary["consecutive_failure_count"] == 0
-
-    pruned = client.post("/v1/webhook-events/prune", json={})
-    assert pruned.status_code == 200
-    assert pruned.json()["total_deleted"] == 1
-
-    history = client.get("/v1/webhook-prune-history", params={"limit": 10})
-    assert history.status_code == 200
-    assert history.json()[0]["total_deleted"] == 1
-
-    unmuted = client.post("/v1/webhook-endpoints/unmute", json={"callback_url": callback_url})
-    assert unmuted.status_code == 200
-    assert unmuted.json()["muted_until"] is None
+    missing_csrf = admin_client.post(
+        "/v1/webhook-endpoints/mute",
+        json={"callback_url": "https://example.com/webhooks", "reason": "pause"},
+    )
+    assert missing_csrf.status_code == 403
 
 
-def test_retry_now_endpoint_requeues_stalled_webhook(monkeypatch, tmp_path: Path):
+def test_invited_approver_can_enroll_login_and_approve(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
     settings = _settings(tmp_path)
-    db = Database(settings.db_path)
-    db.ensure_ready()
-    created_at = (utc_now() - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
-    available_at = (utc_now() - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
-    db.execute(
-        """
-        INSERT INTO webhook_events(
-          id, request_id, event_type, payload_json, callback_url, status, last_error, attempt_count,
-          lease_owner, lease_expires_at, available_at, retry_parent_id, retry_attempt, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "whevt-stalled-api",
-            "req-stalled-api",
-            "approval.pending",
-            '{"request_id":"req-stalled-api"}',
-            "https://example.com/webhooks",
-            "queued",
-            None,
-            0,
-            None,
-            None,
-            available_at,
-            None,
-            0,
-            created_at,
-            created_at,
-        ),
+    admin_client = TestClient(create_app(settings))
+    _bootstrap_admin(admin_client)
+    producer, api_key = _create_producer_key(admin_client, name="invite-agent")
+    producer_client = TestClient(create_app(settings))
+
+    invite = admin_client.post(
+        "/v1/operator/approver-invites",
+        json={"email": "reviewer@example.org", "display_name": "Reviewer"},
+        headers=_csrf_headers(admin_client),
     )
+    assert invite.status_code == 200
+    token = invite.json()["token"]
 
-    class RecordingClient:
-        def __init__(self, *args, **kwargs):
-            return None
+    invite_page = producer_client.get(f"/v1/invites/{token}")
+    assert invite_page.status_code == 200
+    assert invite_page.json()["email"] == "reviewer@example.org"
 
-        def __enter__(self):
-            return self
+    start = producer_client.post(f"/v1/invites/{token}/start", json={})
+    assert start.status_code == 200
+    complete = producer_client.post(
+        f"/v1/invites/{token}/complete",
+        json={"session_id": start.json()["session_id"], "credential": {"id": "cred-reviewer"}},
+    )
+    assert complete.status_code == 200
+    assert complete.json()["is_admin"] is False
+    assert complete.json()["email"] == "reviewer@example.org"
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    auth_session = producer_client.get("/v1/auth/session")
+    assert auth_session.status_code == 200
+    assert auth_session.json()["email"] == "reviewer@example.org"
+    assert auth_session.json()["is_admin"] is False
 
-        def post(self, url, *, content, headers):
-            return httpx.Response(204, request=httpx.Request("POST", url))
+    created = _create_request(producer_client, api_key, request_id="req-invite")
+    assert created["producer_id"] == producer["id"]
 
-    monkeypatch.setattr("clawpass_server.core.webhooks.httpx.Client", RecordingClient)
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: None)
+    approval_link = producer_client.get(f"/v1/approval-links/{created['id']}")
+    assert approval_link.status_code == 200
+    assert approval_link.json()["approval_url"].endswith(f"/approve/{created['id']}")
 
-    client = TestClient(create_app(settings))
-    monkeypatch.setattr("clawpass_server.core.webhooks.WebhookDispatcher._launch_delivery_task", lambda self, task: task())
-    retried = client.post("/v1/webhook-events/whevt-stalled-api/retry-now")
-    assert retried.status_code == 200
-    assert retried.json()["id"] == "whevt-stalled-api"
-    assert retried.json()["status"] == "queued"
+    start_decision = producer_client.post(
+        f"/v1/approval-requests/{created['id']}/decision/start",
+        json={"decision": "APPROVE", "method": "webauthn"},
+        headers=_csrf_headers(producer_client),
+    )
+    assert start_decision.status_code == 200
 
-    delivered = client.get("/v1/webhook-events", params={"request_id": "req-stalled-api"})
-    assert delivered.status_code == 200
-    assert delivered.json()[0]["status"] == "delivered"
+    complete_decision = producer_client.post(
+        f"/v1/approval-requests/{created['id']}/decision/complete",
+        json={"challenge_id": start_decision.json()["challenge_id"], "proof": {"credential": {"id": "cred-reviewer"}}},
+        headers=_csrf_headers(producer_client),
+    )
+    assert complete_decision.status_code == 200
+    assert complete_decision.json()["request"]["status"] == "APPROVED"
+
+    producer_view = producer_client.get(
+        f"/v1/approval-requests/{created['id']}",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    assert producer_view.status_code == 200
+    assert producer_view.json()["status"] == "APPROVED"
+
+
+def test_generic_login_route_uses_email_scoped_approver_credentials(monkeypatch, tmp_path: Path):
+    _mock_webauthn(monkeypatch)
+    settings = _settings(tmp_path)
+    admin_client = TestClient(create_app(settings))
+    _bootstrap_admin(admin_client)
+
+    invite = admin_client.post(
+        "/v1/operator/approver-invites",
+        json={"email": "auditor@example.org", "display_name": "Auditor"},
+        headers=_csrf_headers(admin_client),
+    )
+    assert invite.status_code == 200
+    token = invite.json()["token"]
+
+    enrolled_client = TestClient(create_app(settings))
+    start = enrolled_client.post(f"/v1/invites/{token}/start", json={})
+    assert start.status_code == 200
+    complete = enrolled_client.post(
+        f"/v1/invites/{token}/complete",
+        json={"session_id": start.json()["session_id"], "credential": {"id": "cred-auditor"}},
+    )
+    assert complete.status_code == 200
+
+    login_client = TestClient(create_app(settings))
+    session = _login_as(login_client, email="auditor@example.org", credential_id="cred-auditor")
+    assert session["email"] == "auditor@example.org"
+    assert session["is_admin"] is False

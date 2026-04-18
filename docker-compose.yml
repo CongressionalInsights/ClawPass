@@ -7,10 +7,13 @@ services:
     environment:
       CLAWPASS_HOST: 0.0.0.0
       CLAWPASS_PORT: 8081
+      CLAWPASS_BASE_URL: ${CLAWPASS_BASE_URL:-http://localhost:8081}
       CLAWPASS_DB_PATH: /data/clawpass.db
-      CLAWPASS_EXPECTED_ORIGIN: http://localhost:8081
-      CLAWPASS_RP_ID: localhost
+      CLAWPASS_EXPECTED_ORIGIN: ${CLAWPASS_EXPECTED_ORIGIN:-http://localhost:8081}
+      CLAWPASS_RP_ID: ${CLAWPASS_RP_ID:-localhost}
       CLAWPASS_RP_NAME: ClawPass
+      CLAWPASS_BOOTSTRAP_TOKEN: ${CLAWPASS_BOOTSTRAP_TOKEN:-clawpass-local-bootstrap-token}
+      CLAWPASS_SESSION_SECRET: ${CLAWPASS_SESSION_SECRET:-clawpass-local-session-secret}
     volumes:
       - clawpass-data:/data
 

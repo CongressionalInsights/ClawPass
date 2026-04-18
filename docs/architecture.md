@@ -8,6 +8,8 @@ ClawPass is an approval service for high-risk actions. A producer system submits
 
 The implementation is intentionally compact. There is one FastAPI application, one SQLite persistence layer, one core service layer, and thin SDKs that mirror the HTTP surface.
 
+The current product posture is self-hosted first, single-admin first, and single-instance first.
+
 ## Main system boundaries
 
 ### API layer
@@ -41,6 +43,10 @@ Important tables:
 - `approval_requests`: durable approval intent and final status
 - `decision_challenges`: short-lived approval challenges
 - `approvers`: approver identity records
+- `admins`: admin role overlay on top of approvers
+- `admin_sessions` and `approver_sessions`: server-stored opaque browser sessions
+- `approver_invites`: single-admin invite flow for additional human approvers
+- `producers` and `producer_api_keys`: machine identities for agent or producer clients
 - `webauthn_credentials`: passkeys and Ledger security-key credentials
 - `ethereum_signers`: Ledger-backed or other Ethereum signer identities
 - `webhook_events`: delivery log, retry chain, lease state, dead-letter state
@@ -62,9 +68,12 @@ Important tables:
 
 `src/clawpass_server/web/` contains the built-in onboarding and operator UI. It is not a separate SPA deployment. It is served directly by the FastAPI app.
 
-The UI currently covers two major workflows:
-- approver onboarding and method enrollment
-- webhook operator triage and actions
+The UI currently covers:
+- first-run bootstrap for the initial admin
+- passkey login for invited or existing approvers
+- invite-backed approver enrollment
+- approval links for pending requests
+- admin operator controls for producers, invites, webhook triage, and security settings
 
 ### SDKs
 
@@ -125,6 +134,8 @@ This is why webhook operations are a first-class operator surface in the repo.
 ClawPass now exposes operator-facing webhook controls through both the API and the built-in UI.
 
 Operators can:
+- invite approvers and review enrolled approver identities
+- create producers and issue or revoke producer API keys
 - inspect backlog and failure summaries
 - inspect endpoint health
 - filter events by request, status, event type, or callback URL
@@ -140,6 +151,7 @@ The runtime is configured through environment variables loaded in `src/clawpass_
 
 The main groups are:
 - server bind settings: host, port, database path
+- instance and session bootstrap: base URL, deployment mode, bootstrap token, session secret
 - WebAuthn relying party settings: RP id, RP name, expected origins
 - TTL settings: challenge and approval defaults
 - webhook delivery settings: timeout, lease seconds, retry poll interval
@@ -160,7 +172,7 @@ The repo supports:
 - Docker image build via `Dockerfile`
 - local compose startup via `docker-compose.yml`
 
-The current webhook queue and lease design is safe for multiple app instances sharing the same SQLite database at the claim level, but the deployment model is still intentionally simple.
+The supported deployment model today is one service instance with one SQLite database on persistent local storage. SQLite remains acceptable for P0 and P1 self-hosted installs, but multi-instance deployment should be treated as unsupported until a Postgres-backed path exists.
 
 ## Documentation map
 

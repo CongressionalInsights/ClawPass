@@ -17,11 +17,13 @@ export interface CreateApprovalRequestPayload {
 
 export interface ClawPassClientOptions {
   baseUrl: string;
+  apiKey?: string;
   headers?: Record<string, string>;
 }
 
 export interface ApprovalRequest {
   id: string;
+  producer_id: string | null;
   action_type: string;
   action_ref: string | null;
   action_hash: string;
@@ -37,6 +39,7 @@ export interface ApprovalRequest {
   expires_at: string;
   decided_at: string | null;
   callback_url: string | null;
+  approval_url: string | null;
 }
 
 export interface ApproverSummary {
@@ -144,13 +147,27 @@ export interface WebhookEventListFilters {
   cursor?: string;
 }
 
+export interface WaitForFinalDecisionOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+export interface VerifyApprovedRequestOptions {
+  requestId?: string;
+  actionHash?: string;
+  producerId?: string;
+}
+
 export class ClawPassClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
 
   constructor(options: ClawPassClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.headers = options.headers || {};
+    this.headers = {
+      ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
+      ...(options.headers || {}),
+    };
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -174,6 +191,10 @@ export class ClawPassClient {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  createGatedAction(payload: CreateApprovalRequestPayload) {
+    return this.createApprovalRequest(payload);
   }
 
   getApprovalRequest(requestId: string) {
@@ -293,5 +314,37 @@ export class ClawPassClient {
       method: "POST",
       body: JSON.stringify({ challenge_id: challengeId, proof }),
     });
+  }
+
+  async waitForFinalDecision(requestId: string, options: WaitForFinalDecisionOptions = {}) {
+    const timeoutMs = options.timeoutMs ?? 600_000;
+    const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+    const started = Date.now();
+    while (true) {
+      const current = await this.getApprovalRequest(requestId);
+      if (["APPROVED", "DENIED", "EXPIRED", "CANCELLED"].includes(current.status)) {
+        return current;
+      }
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(`Approval request ${requestId} did not reach a terminal state in time.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  verifyApprovedRequest(request: ApprovalRequest, expected: VerifyApprovedRequestOptions = {}) {
+    if (request.status !== "APPROVED") {
+      throw new Error(`Approval request is not approved: ${request.status}`);
+    }
+    if (expected.requestId && request.id !== expected.requestId) {
+      throw new Error("Approval request id does not match the expected requestId.");
+    }
+    if (expected.actionHash && request.action_hash !== expected.actionHash) {
+      throw new Error("Approval request action_hash does not match the expected action hash.");
+    }
+    if (expected.producerId && request.producer_id !== expected.producerId) {
+      throw new Error("Approval request producer_id does not match the expected producer identity.");
+    }
+    return request;
   }
 }

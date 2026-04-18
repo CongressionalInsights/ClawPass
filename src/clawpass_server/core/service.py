@@ -9,6 +9,15 @@ from fastapi import HTTPException
 
 from clawpass_server.adapters.ethereum_adapter import EthereumAdapter
 from clawpass_server.adapters.webauthn_adapter import WebAuthnAdapter
+from clawpass_server.core.auth import (
+    AdminSessionPrincipal,
+    ProducerPrincipal,
+    extract_bearer_token,
+    hash_secret,
+    make_api_key,
+    secret_matches,
+    split_api_key,
+)
 from clawpass_server.core.audit import AuditLogger
 from clawpass_server.core.config import Settings
 from clawpass_server.core.constants import (
@@ -37,9 +46,20 @@ from clawpass_server.core.constants import (
 from clawpass_server.core.database import Database
 from clawpass_server.core.policy import PolicyEngine
 from clawpass_server.core.schemas import (
+    AdminLoginCompleteRequest,
+    AdminLoginStartResponse,
+    AdminSessionResponse,
+    ApprovalLinkResponse,
     ApprovalRequestResponse,
     ApproverIdentityIn,
+    ApproverInviteCreateRequest,
+    ApproverInviteResponse,
+    ApproverResponse,
     ApproverSummary,
+    BootstrapCompleteRequest,
+    BootstrapStartRequest,
+    BootstrapStartResponse,
+    BootstrapStatusResponse,
     CreateApprovalRequest,
     DecisionCompleteRequest,
     DecisionStartRequest,
@@ -48,6 +68,11 @@ from clawpass_server.core.schemas import (
     EthereumSignerChallengeResponse,
     EthereumSignerVerifyRequest,
     EthereumSignerVerifyResponse,
+    LoginStartRequest,
+    ProducerCreateRequest,
+    ProducerKeyCreateRequest,
+    ProducerKeyResponse,
+    ProducerResponse,
     WebAuthnRegisterCompleteRequest,
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterStartRequest,
@@ -83,6 +108,490 @@ class ClawPassService:
         self._webauthn = webauthn
         self._ethereum = ethereum
         self._webhooks = WebhookDispatcher(db, settings)
+
+    def is_initialized(self) -> bool:
+        row = self._db.fetchone("SELECT id FROM admins LIMIT 1")
+        return bool(row)
+
+    def get_bootstrap_status(self) -> BootstrapStatusResponse:
+        return BootstrapStatusResponse(
+            initialized=self.is_initialized(),
+            bootstrap_configured=bool(self._settings.bootstrap_token),
+        )
+
+    def start_bootstrap(self, payload: BootstrapStartRequest) -> BootstrapStartResponse:
+        if self.is_initialized():
+            raise HTTPException(status_code=400, detail="ClawPass is already initialized.")
+        if not self._settings.bootstrap_token:
+            raise HTTPException(status_code=503, detail="Bootstrap token is not configured on this instance.")
+        if payload.bootstrap_token.strip() != self._settings.bootstrap_token:
+            raise HTTPException(status_code=403, detail="Invalid bootstrap token.")
+
+        approver = self._ensure_approver(
+            ApproverIdentityIn(email=payload.email.lower(), display_name=payload.display_name),
+            require_existing=False,
+        )
+        existing = self._db.fetchall(
+            "SELECT credential_id FROM webauthn_credentials WHERE approver_id = ?",
+            (approver["id"],),
+        )
+        options, challenge = self._webauthn.generate_registration(
+            user_id=approver["id"],
+            user_name=approver["email"],
+            user_display_name=approver.get("display_name") or approver["email"],
+            exclude_credential_ids=[row["credential_id"] for row in existing],
+            is_ledger=False,
+        )
+        session_id = stable_id("bootstrap")
+        self._db.execute(
+            """
+            INSERT INTO bootstrap_sessions(id, approver_id, email, display_name, challenge, options_json, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                approver["id"],
+                approver["email"],
+                approver.get("display_name"),
+                challenge,
+                json_dumps(options),
+                add_minutes_iso(self._settings.challenge_ttl_minutes),
+                utc_now_iso(),
+            ),
+        )
+        self._audit.log(
+            event_type="bootstrap.started",
+            resource_type="instance",
+            resource_id=self._settings.instance_id,
+            actor=approver["id"],
+            payload={"session_id": session_id, "email": approver["email"]},
+        )
+        return BootstrapStartResponse(session_id=session_id, public_key_options=options)
+
+    def complete_bootstrap(self, payload: BootstrapCompleteRequest) -> tuple[AdminSessionResponse, str, str]:
+        if self.is_initialized():
+            raise HTTPException(status_code=400, detail="ClawPass is already initialized.")
+        session = self._db.fetchone("SELECT * FROM bootstrap_sessions WHERE id = ?", (payload.session_id,))
+        if not session:
+            raise HTTPException(status_code=404, detail="Bootstrap session not found.")
+        if parse_iso(session["expires_at"]) <= utc_now():
+            raise HTTPException(status_code=400, detail="Bootstrap session expired. Start again.")
+
+        verification = self._webauthn.verify_registration(
+            credential=payload.credential,
+            challenge=session["challenge"],
+        )
+        now = utc_now_iso()
+        credential_row_id = stable_id("cred")
+        approver = self._db.fetchone("SELECT * FROM approvers WHERE id = ?", (session["approver_id"],))
+        if not approver:
+            self._db.execute(
+                "INSERT INTO approvers(id, email, display_name, created_at) VALUES (?, ?, ?, ?)",
+                (session["approver_id"], session["email"].lower(), session.get("display_name"), now),
+            )
+        self._db.execute(
+            """
+            INSERT INTO webauthn_credentials(
+              id, approver_id, credential_id, public_key, sign_count, transports_json, aaguid, label, created_at, is_ledger
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(credential_id) DO UPDATE SET
+              approver_id=excluded.approver_id,
+              public_key=excluded.public_key,
+              sign_count=excluded.sign_count,
+              transports_json=excluded.transports_json,
+              aaguid=excluded.aaguid,
+              label=excluded.label,
+              is_ledger=excluded.is_ledger
+            """,
+            (
+                credential_row_id,
+                session["approver_id"],
+                verification.credential_id,
+                verification.credential_public_key,
+                verification.sign_count,
+                "[]",
+                verification.aaguid,
+                payload.label or "Primary passkey",
+                now,
+                0,
+            ),
+        )
+        admin_id = stable_id("admin")
+        self._db.execute(
+            """
+            INSERT INTO admins(id, approver_id, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(approver_id) DO NOTHING
+            """,
+            (admin_id, session["approver_id"], now),
+        )
+        admin = self._db.fetchone("SELECT * FROM admins WHERE approver_id = ?", (session["approver_id"],))
+        self._db.execute("DELETE FROM bootstrap_sessions WHERE id = ?", (payload.session_id,))
+        self._audit.log(
+            event_type="bootstrap.completed",
+            resource_type="instance",
+            resource_id=self._settings.instance_id,
+            actor=session["approver_id"],
+            payload={"admin_id": admin["id"], "approver_id": session["approver_id"]},
+        )
+        session_id, csrf_token = self._issue_session_for_approver(session["approver_id"])
+        response = self.get_session_response(session["approver_id"])
+        return response, session_id, csrf_token
+
+    def start_login(self, payload: LoginStartRequest) -> AdminLoginStartResponse:
+        approver = self._ensure_approver(
+            ApproverIdentityIn(email=payload.email.lower()),
+            require_existing=True,
+        )
+        return self._start_login_for_approver(approver["id"])
+
+    def start_admin_login(self) -> AdminLoginStartResponse:
+        admin = self._require_single_admin()
+        return self._start_login_for_approver(admin["approver_id"])
+
+    def complete_login(self, payload: AdminLoginCompleteRequest) -> tuple[AdminSessionResponse, str, str]:
+        session = self._db.fetchone("SELECT * FROM approver_login_sessions WHERE id = ?", (payload.session_id,))
+        if not session:
+            session = self._db.fetchone("SELECT * FROM admin_login_sessions WHERE id = ?", (payload.session_id,))
+            if session and session.get("admin_id"):
+                admin = self._require_admin(session["admin_id"])
+                approver_id = admin["approver_id"]
+            else:
+                approver_id = None
+        else:
+            approver_id = session["approver_id"]
+        if not session or not approver_id:
+            raise HTTPException(status_code=404, detail="Login session not found.")
+        if parse_iso(session["expires_at"]) <= utc_now():
+            raise HTTPException(status_code=400, detail="Login session expired.")
+
+        self._verify_authentication_proof(approver_id, session["challenge"], payload.credential)
+        self._db.execute("DELETE FROM approver_login_sessions WHERE id = ?", (payload.session_id,))
+        self._db.execute("DELETE FROM admin_login_sessions WHERE id = ?", (payload.session_id,))
+        session_id, csrf_token = self._issue_session_for_approver(approver_id)
+        return self.get_session_response(approver_id), session_id, csrf_token
+
+    def complete_admin_login(self, payload: AdminLoginCompleteRequest) -> tuple[AdminSessionResponse, str, str]:
+        return self.complete_login(payload)
+
+    def resolve_human_session(
+        self,
+        session_id: str | None,
+        *,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
+    ) -> AdminSessionPrincipal | None:
+        if not session_id:
+            return None
+
+        admin_session = self._db.fetchone("SELECT * FROM admin_sessions WHERE id = ?", (session_id,))
+        if admin_session:
+            if parse_iso(admin_session["expires_at"]) <= utc_now():
+                self._db.execute("DELETE FROM admin_sessions WHERE id = ?", (session_id,))
+                return None
+            if require_csrf and csrf_token != admin_session["csrf_token"]:
+                raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+            admin = self._require_admin(admin_session["admin_id"])
+            self._db.execute("UPDATE admin_sessions SET last_seen_at = ? WHERE id = ?", (utc_now_iso(), session_id))
+            return AdminSessionPrincipal(
+                admin_id=admin["id"],
+                approver_id=admin["approver_id"],
+                email=admin["email"],
+                display_name=admin.get("display_name"),
+                session_id=session_id,
+                csrf_token=admin_session["csrf_token"],
+            )
+
+        approver_session = self._db.fetchone("SELECT * FROM approver_sessions WHERE id = ?", (session_id,))
+        if not approver_session:
+            return None
+        if parse_iso(approver_session["expires_at"]) <= utc_now():
+            self._db.execute("DELETE FROM approver_sessions WHERE id = ?", (session_id,))
+            return None
+        if require_csrf and csrf_token != approver_session["csrf_token"]:
+            raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+        approver = self._db.fetchone("SELECT * FROM approvers WHERE id = ?", (approver_session["approver_id"],))
+        if not approver:
+            self._db.execute("DELETE FROM approver_sessions WHERE id = ?", (session_id,))
+            return None
+        admin = self._get_admin_by_approver_id(approver["id"])
+        self._db.execute("UPDATE approver_sessions SET last_seen_at = ? WHERE id = ?", (utc_now_iso(), session_id))
+        return AdminSessionPrincipal(
+            admin_id=admin["id"] if admin else None,
+            approver_id=approver["id"],
+            email=approver["email"],
+            display_name=approver.get("display_name"),
+            session_id=session_id,
+            csrf_token=approver_session["csrf_token"],
+        )
+
+    def resolve_admin_session(
+        self,
+        session_id: str | None,
+        *,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
+    ) -> AdminSessionPrincipal | None:
+        principal = self.resolve_human_session(session_id, csrf_token=csrf_token, require_csrf=require_csrf)
+        if not principal or not principal.is_admin:
+            return None
+        return principal
+
+    def require_human_session(
+        self,
+        session_id: str | None,
+        *,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
+    ) -> AdminSessionPrincipal:
+        principal = self.resolve_human_session(session_id, csrf_token=csrf_token, require_csrf=require_csrf)
+        if not principal:
+            raise HTTPException(status_code=401, detail="Approver authentication required.")
+        return principal
+
+    def require_admin_session(
+        self,
+        session_id: str | None,
+        *,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
+    ) -> AdminSessionPrincipal:
+        principal = self.require_human_session(session_id, csrf_token=csrf_token, require_csrf=require_csrf)
+        if not principal.is_admin:
+            raise HTTPException(status_code=403, detail="Admin authentication required.")
+        return principal
+
+    def logout_session(self, session_id: str | None) -> None:
+        if session_id:
+            self._db.execute("DELETE FROM admin_sessions WHERE id = ?", (session_id,))
+            self._db.execute("DELETE FROM approver_sessions WHERE id = ?", (session_id,))
+
+    def logout_admin_session(self, session_id: str | None) -> None:
+        self.logout_session(session_id)
+
+    def get_session_response(self, approver_id: str) -> AdminSessionResponse:
+        approver = self._db.fetchone("SELECT * FROM approvers WHERE id = ?", (approver_id,))
+        if not approver:
+            raise HTTPException(status_code=404, detail="Approver not found.")
+        admin = self._get_admin_by_approver_id(approver_id)
+        summary = self.get_approver_summary(approver_id)
+        return AdminSessionResponse(
+            admin_id=admin["id"] if admin else None,
+            approver_id=summary.id,
+            email=summary.email,
+            display_name=summary.display_name,
+            passkey_count=summary.passkey_count,
+            ledger_webauthn_count=summary.ledger_webauthn_count,
+            ethereum_signer_count=summary.ethereum_signer_count,
+            is_admin=bool(admin),
+        )
+
+    def get_admin_session_response(self, admin_id: str) -> AdminSessionResponse:
+        admin = self._require_admin(admin_id)
+        return self.get_session_response(admin["approver_id"])
+
+    def list_producers(self) -> list[ProducerResponse]:
+        rows = self._db.fetchall("SELECT * FROM producers ORDER BY created_at DESC, id DESC")
+        return [
+            ProducerResponse(
+                id=row["id"],
+                name=row["name"],
+                description=row.get("description"),
+                created_at=row["created_at"],
+                revoked_at=row.get("revoked_at"),
+            )
+            for row in rows
+        ]
+
+    def list_approvers(self) -> list[ApproverResponse]:
+        rows = self._db.fetchall("SELECT * FROM approvers ORDER BY created_at DESC, id DESC")
+        approvers: list[ApproverResponse] = []
+        for row in rows:
+            summary = self.get_approver_summary(row["id"])
+            approvers.append(
+                ApproverResponse(
+                    id=row["id"],
+                    email=row["email"],
+                    display_name=row.get("display_name"),
+                    created_at=row["created_at"],
+                    passkey_count=summary.passkey_count,
+                    ledger_webauthn_count=summary.ledger_webauthn_count,
+                    ethereum_signer_count=summary.ethereum_signer_count,
+                )
+            )
+        return approvers
+
+    def list_approver_invites(self) -> list[ApproverInviteResponse]:
+        rows = self._db.fetchall("SELECT * FROM approver_invites ORDER BY created_at DESC, token DESC")
+        return [self._to_approver_invite_response(row) for row in rows]
+
+    def create_approver_invite(self, payload: ApproverInviteCreateRequest) -> ApproverInviteResponse:
+        approver = self._ensure_approver(
+            ApproverIdentityIn(email=payload.email.lower(), display_name=payload.display_name),
+            require_existing=False,
+        )
+        token = token_urlsafe(24)
+        created_at = utc_now_iso()
+        expires_at = add_minutes_iso(payload.expires_in_minutes or (24 * 60))
+        self._db.execute(
+            """
+            INSERT INTO approver_invites(token, approver_id, email, display_name, next_path, expires_at, created_at, consumed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                token,
+                approver["id"],
+                approver["email"],
+                approver.get("display_name"),
+                payload.next_path,
+                expires_at,
+                created_at,
+            ),
+        )
+        row = self._db.fetchone("SELECT * FROM approver_invites WHERE token = ?", (token,))
+        self._audit.log(
+            event_type="approver.invite.created",
+            resource_type="approver",
+            resource_id=approver["id"],
+            actor="system",
+            payload={"token": token, "email": approver["email"], "expires_at": expires_at},
+        )
+        return self._to_approver_invite_response(row)
+
+    def get_approver_invite(self, token: str) -> ApproverInviteResponse:
+        return self._to_approver_invite_response(self._require_invite(token))
+
+    def start_approver_invite_enrollment(self, token: str) -> WebAuthnRegisterStartResponse:
+        invite = self._require_invite(token)
+        return self.start_webauthn_registration(
+            WebAuthnRegisterStartRequest(
+                approver_id=invite["approver_id"],
+                is_ledger=False,
+                label="Primary passkey",
+            )
+        )
+
+    def complete_approver_invite_enrollment(
+        self,
+        token: str,
+        payload: WebAuthnRegisterCompleteRequest,
+    ) -> tuple[AdminSessionResponse, str, str]:
+        invite = self._require_invite(token)
+        completed = self.complete_webauthn_registration(payload)
+        if completed.approver_id != invite["approver_id"]:
+            raise HTTPException(status_code=400, detail="Invite enrollment does not match the invited approver.")
+        consumed_at = utc_now_iso()
+        self._db.execute("UPDATE approver_invites SET consumed_at = ? WHERE token = ?", (consumed_at, token))
+        session_id, csrf_token = self._issue_session_for_approver(invite["approver_id"])
+        self._audit.log(
+            event_type="approver.invite.accepted",
+            resource_type="approver",
+            resource_id=invite["approver_id"],
+            actor=invite["approver_id"],
+            payload={"token": token},
+        )
+        return self.get_session_response(invite["approver_id"]), session_id, csrf_token
+
+    def create_producer(self, payload: ProducerCreateRequest) -> ProducerResponse:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Producer name is required.")
+        producer_id = stable_id("producer")
+        now = utc_now_iso()
+        try:
+            self._db.execute(
+                "INSERT INTO producers(id, name, description, created_at, revoked_at) VALUES (?, ?, ?, ?, NULL)",
+                (producer_id, name, payload.description, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail=f"Producer '{payload.name}' already exists.") from exc
+        return ProducerResponse(
+            id=producer_id,
+            name=name,
+            description=payload.description,
+            created_at=now,
+            revoked_at=None,
+        )
+
+    def issue_producer_key(self, producer_id: str, payload: ProducerKeyCreateRequest) -> ProducerKeyResponse:
+        producer = self._require_producer(producer_id)
+        if producer.get("revoked_at"):
+            raise HTTPException(status_code=400, detail="Producer is revoked.")
+        key_id = stable_id("pkey")
+        secret = token_urlsafe(24)
+        created_at = utc_now_iso()
+        self._db.execute(
+            """
+            INSERT INTO producer_api_keys(id, producer_id, public_key_id, secret_hash, label, created_at, last_used_at, revoked_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (key_id, producer_id, key_id, hash_secret(secret), payload.label, created_at),
+        )
+        return ProducerKeyResponse(
+            key_id=key_id,
+            producer_id=producer_id,
+            api_key=make_api_key(key_id, secret),
+            created_at=created_at,
+            label=payload.label,
+        )
+
+    def revoke_producer_key(self, producer_id: str, key_id: str) -> ProducerKeyResponse:
+        row = self._db.fetchone(
+            "SELECT * FROM producer_api_keys WHERE public_key_id = ? AND producer_id = ?",
+            (key_id, producer_id),
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Producer key not found.")
+        revoked_at = utc_now_iso()
+        self._db.execute(
+            "UPDATE producer_api_keys SET revoked_at = ? WHERE public_key_id = ? AND producer_id = ?",
+            (revoked_at, key_id, producer_id),
+        )
+        return ProducerKeyResponse(
+            key_id=key_id,
+            producer_id=producer_id,
+            api_key=None,
+            created_at=row["created_at"],
+            label=row.get("label"),
+        )
+
+    def resolve_producer(self, authorization_header: str | None) -> ProducerPrincipal | None:
+        token = extract_bearer_token(authorization_header)
+        if not token:
+            return None
+        parsed = split_api_key(token)
+        if not parsed:
+            return None
+        public_key_id, secret = parsed
+        row = self._db.fetchone(
+            """
+            SELECT p.id AS producer_id, p.name, p.revoked_at AS producer_revoked_at,
+                   k.public_key_id, k.secret_hash, k.revoked_at AS key_revoked_at
+            FROM producer_api_keys k
+            JOIN producers p ON p.id = k.producer_id
+            WHERE k.public_key_id = ?
+            """,
+            (public_key_id,),
+        )
+        if not row or row.get("key_revoked_at") or row.get("producer_revoked_at"):
+            return None
+        if not secret_matches(secret, row["secret_hash"]):
+            return None
+        self._db.execute(
+            "UPDATE producer_api_keys SET last_used_at = ? WHERE public_key_id = ?",
+            (utc_now_iso(), public_key_id),
+        )
+        return ProducerPrincipal(
+            producer_id=row["producer_id"],
+            key_id=public_key_id,
+            name=row["name"],
+        )
+
+    def require_producer(self, authorization_header: str | None) -> ProducerPrincipal:
+        principal = self.resolve_producer(authorization_header)
+        if not principal:
+            raise HTTPException(status_code=401, detail="Producer API key required.")
+        return principal
 
     def start_webauthn_registration(self, payload: WebAuthnRegisterStartRequest) -> WebAuthnRegisterStartResponse:
         approver = self._ensure_approver(payload)
@@ -179,7 +688,12 @@ class ClawPassService:
             is_ledger=bool(session["is_ledger"]),
         )
 
-    def create_approval_request(self, payload: CreateApprovalRequest) -> ApprovalRequestResponse:
+    def create_approval_request(
+        self,
+        payload: CreateApprovalRequest,
+        *,
+        producer_id: str | None = None,
+    ) -> ApprovalRequestResponse:
         request_id = payload.request_id or stable_id("apr")
         risk_level = payload.risk_level.lower()
         if risk_level not in VALID_RISK_LEVELS:
@@ -201,12 +715,13 @@ class ClawPassService:
             self._db.execute(
                 """
                 INSERT INTO approval_requests(
-                  id, action_type, action_ref, action_hash, requester_id, risk_level, metadata_json, status,
+                  id, producer_id, action_type, action_ref, action_hash, requester_id, risk_level, metadata_json, status,
                   decision, approver_id, method, created_at, expires_at, decided_at, nonce, callback_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL, ?, ?)
                 """,
                 (
                     request_id,
+                    producer_id,
                     payload.action_type,
                     payload.action_ref,
                     payload.action_hash,
@@ -229,18 +744,43 @@ class ClawPassService:
             event_type="approval.request.created",
             resource_type="approval_request",
             resource_id=request_id,
-            actor=payload.requester_id,
-            payload={"risk_level": risk_level, "action_type": payload.action_type},
+            actor=producer_id or payload.requester_id,
+            payload={"risk_level": risk_level, "action_type": payload.action_type, "producer_id": producer_id},
         )
         return self._to_approval_response(row)
 
-    def get_approval_request(self, request_id: str) -> ApprovalRequestResponse:
+    def get_approval_link(self, request_id: str) -> ApprovalLinkResponse:
+        row = self._expire_if_needed(self._require_request(request_id))
+        return ApprovalLinkResponse(
+            id=row["id"],
+            producer_id=row.get("producer_id"),
+            action_type=row["action_type"],
+            action_ref=row.get("action_ref"),
+            risk_level=row["risk_level"],
+            status=row["status"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            approval_url=self._approval_url(row["id"]),
+        )
+
+    def get_approval_request(self, request_id: str, *, producer_id: str | None = None) -> ApprovalRequestResponse:
         row = self._require_request(request_id)
+        if producer_id and row.get("producer_id") != producer_id:
+            raise HTTPException(status_code=404, detail="Approval request not found.")
         row = self._expire_if_needed(row)
         return self._to_approval_response(row)
 
-    def cancel_approval_request(self, request_id: str, *, reason: str | None) -> ApprovalRequestResponse:
+    def cancel_approval_request(
+        self,
+        request_id: str,
+        *,
+        reason: str | None,
+        actor: str = "system",
+        producer_id: str | None = None,
+    ) -> ApprovalRequestResponse:
         row = self._require_request(request_id)
+        if producer_id and row.get("producer_id") != producer_id:
+            raise HTTPException(status_code=404, detail="Approval request not found.")
         row = self._expire_if_needed(row)
         if row["status"] != APPROVAL_STATUS_PENDING:
             raise HTTPException(status_code=400, detail="Only pending requests can be cancelled.")
@@ -264,8 +804,8 @@ class ClawPassService:
             event_type="approval.request.cancelled",
             resource_type="approval_request",
             resource_id=request_id,
-            actor="system",
-            payload={"reason": reason},
+            actor=actor,
+            payload={"reason": reason, "producer_id": row.get("producer_id")},
         )
         updated = self._require_request(request_id)
         self._emit_request_event(updated, EVENT_APPROVAL_CANCELLED)
@@ -1192,6 +1732,160 @@ class ClawPassService:
     def start_webhook_recovery_loop(self) -> None:
         self._webhooks.start_recovery_loop()
 
+    def _approval_url(self, request_id: str) -> str:
+        return f"{self._settings.base_url}/approve/{request_id}"
+
+    def _start_login_for_approver(self, approver_id: str) -> AdminLoginStartResponse:
+        credential_rows = self._db.fetchall(
+            "SELECT credential_id FROM webauthn_credentials WHERE approver_id = ?",
+            (approver_id,),
+        )
+        if not credential_rows:
+            raise HTTPException(status_code=400, detail="Approver has no passkey credentials enrolled.")
+        options, challenge = self._webauthn.generate_authentication(
+            allowed_credential_ids=[row["credential_id"] for row in credential_rows]
+        )
+        session_id = stable_id("approver_login")
+        self._db.execute(
+            """
+            INSERT INTO approver_login_sessions(id, approver_id, challenge, options_json, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                approver_id,
+                challenge,
+                json_dumps(options),
+                add_minutes_iso(self._settings.challenge_ttl_minutes),
+                utc_now_iso(),
+            ),
+        )
+        return AdminLoginStartResponse(session_id=session_id, public_key_options=options)
+
+    def _verify_authentication_proof(self, approver_id: str, challenge: str, credential: dict[str, Any]) -> None:
+        if not isinstance(credential, dict):
+            raise HTTPException(status_code=400, detail="WebAuthn credential is required.")
+        credential_id = str(credential.get("id") or credential.get("rawId") or "").strip()
+        if not credential_id:
+            raise HTTPException(status_code=400, detail="WebAuthn credential id missing in proof.")
+        credential_row = self._db.fetchone(
+            """
+            SELECT * FROM webauthn_credentials
+            WHERE approver_id = ? AND credential_id = ?
+            """,
+            (approver_id, credential_id),
+        )
+        if not credential_row:
+            raise HTTPException(status_code=400, detail="Credential not enrolled for the approver.")
+        try:
+            new_sign_count = self._webauthn.verify_authentication(
+                credential=credential,
+                challenge=challenge,
+                credential_public_key=credential_row["public_key"],
+                credential_current_sign_count=int(credential_row["sign_count"]),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        self._db.execute(
+            """
+            UPDATE webauthn_credentials
+            SET sign_count = ?, last_used_at = ?
+            WHERE id = ?
+            """,
+            (new_sign_count, utc_now_iso(), credential_row["id"]),
+        )
+
+    def _issue_approver_session(self, approver_id: str) -> tuple[str, str]:
+        session_id = stable_id("approversess")
+        csrf_token = token_urlsafe(18)
+        now = utc_now_iso()
+        self._db.execute(
+            """
+            INSERT INTO approver_sessions(id, approver_id, csrf_token, expires_at, created_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                approver_id,
+                csrf_token,
+                add_minutes_iso(self._settings.admin_session_ttl_minutes),
+                now,
+                now,
+            ),
+        )
+        return session_id, csrf_token
+
+    def _issue_admin_session(self, admin_id: str) -> tuple[str, str]:
+        session_id = stable_id("adminsess")
+        csrf_token = token_urlsafe(18)
+        now = utc_now_iso()
+        self._db.execute(
+            """
+            INSERT INTO admin_sessions(id, admin_id, csrf_token, expires_at, created_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                admin_id,
+                csrf_token,
+                add_minutes_iso(self._settings.admin_session_ttl_minutes),
+                now,
+                now,
+            ),
+        )
+        return session_id, csrf_token
+
+    def _issue_session_for_approver(self, approver_id: str) -> tuple[str, str]:
+        admin = self._get_admin_by_approver_id(approver_id)
+        if admin:
+            return self._issue_admin_session(admin["id"])
+        return self._issue_approver_session(approver_id)
+
+    def _require_single_admin(self) -> dict[str, Any]:
+        row = self._db.fetchone(
+            """
+            SELECT a.id, a.approver_id, p.email, p.display_name
+            FROM admins a
+            JOIN approvers p ON p.id = a.approver_id
+            ORDER BY a.created_at ASC, a.id ASC
+            LIMIT 1
+            """
+        )
+        if not row:
+            raise HTTPException(status_code=400, detail="ClawPass is not initialized.")
+        return row
+
+    def _require_admin(self, admin_id: str) -> dict[str, Any]:
+        row = self._db.fetchone(
+            """
+            SELECT a.id, a.approver_id, p.email, p.display_name
+            FROM admins a
+            JOIN approvers p ON p.id = a.approver_id
+            WHERE a.id = ?
+            """,
+            (admin_id,),
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Admin not found.")
+        return row
+
+    def _get_admin_by_approver_id(self, approver_id: str) -> dict[str, Any] | None:
+        return self._db.fetchone(
+            """
+            SELECT a.id, a.approver_id, p.email, p.display_name
+            FROM admins a
+            JOIN approvers p ON p.id = a.approver_id
+            WHERE a.approver_id = ?
+            """,
+            (approver_id,),
+        )
+
+    def _require_producer(self, producer_id: str) -> dict[str, Any]:
+        row = self._db.fetchone("SELECT * FROM producers WHERE id = ?", (producer_id,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Producer not found.")
+        return row
+
     def _get_webhook_endpoint_control(self, callback_url: str) -> dict[str, Any] | None:
         return self._db.fetchone(
             "SELECT * FROM webhook_endpoint_controls WHERE callback_url = ?",
@@ -1249,23 +1943,35 @@ class ClawPassService:
             raise HTTPException(status_code=404, detail="Webhook event not found.")
         return row
 
-    def list_approval_requests(self, *, status: str | None = None) -> list[ApprovalRequestResponse]:
+    def list_approval_requests(
+        self,
+        *,
+        status: str | None = None,
+        producer_id: str | None = None,
+    ) -> list[ApprovalRequestResponse]:
         self._expire_pending_requests()
+        clauses: list[str] = []
+        params: list[str] = []
         if status:
             normalized_status = status.upper()
             if normalized_status not in VALID_APPROVAL_STATUSES:
                 raise HTTPException(status_code=400, detail=f"Unsupported status '{status}'.")
-            rows = self._db.fetchall(
-                "SELECT * FROM approval_requests WHERE status = ? ORDER BY created_at DESC LIMIT 200",
-                (normalized_status,),
-            )
-        else:
-            rows = self._db.fetchall("SELECT * FROM approval_requests ORDER BY created_at DESC LIMIT 200")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+        if producer_id:
+            clauses.append("producer_id = ?")
+            params.append(producer_id)
+        query = "SELECT * FROM approval_requests"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT 200"
+        rows = self._db.fetchall(query, tuple(params))
         return [self._to_approval_response(row) for row in rows]
 
     def _emit_request_event(self, row: dict[str, Any], event_type: str) -> None:
         payload = {
             "request_id": row["id"],
+            "producer_id": row.get("producer_id"),
             "event_type": event_type,
             "status": row["status"],
             "decision": row.get("decision"),
@@ -1280,6 +1986,7 @@ class ClawPassService:
             "decided_at": row.get("decided_at"),
             "nonce": row["nonce"],
             "metadata": json.loads(row["metadata_json"]),
+            "approval_url": self._approval_url(row["id"]),
         }
         self._webhooks.dispatch(
             request_id=row["id"],
@@ -1300,6 +2007,16 @@ class ClawPassService:
         if not row:
             raise HTTPException(status_code=404, detail="Approval request not found.")
         return row
+
+    def _require_invite(self, token: str) -> dict[str, Any]:
+        invite = self._db.fetchone("SELECT * FROM approver_invites WHERE token = ?", (token,))
+        if not invite:
+            raise HTTPException(status_code=404, detail="Invite not found.")
+        if invite.get("consumed_at"):
+            raise HTTPException(status_code=400, detail="Invite already used.")
+        if parse_iso(invite["expires_at"]) <= utc_now():
+            raise HTTPException(status_code=400, detail="Invite expired.")
+        return invite
 
     def _expire_pending_requests(self) -> None:
         now = utc_now_iso()
@@ -1341,6 +2058,12 @@ class ClawPassService:
         if payload.email:
             existing = self._db.fetchone("SELECT * FROM approvers WHERE LOWER(email) = LOWER(?)", (payload.email,))
             if existing:
+                if payload.display_name and payload.display_name != existing.get("display_name"):
+                    self._db.execute(
+                        "UPDATE approvers SET display_name = ? WHERE id = ?",
+                        (payload.display_name, existing["id"]),
+                    )
+                    existing["display_name"] = payload.display_name
                 return existing
 
         if require_existing:
@@ -1364,9 +2087,21 @@ class ClawPassService:
         )
         return self._db.fetchone("SELECT * FROM approvers WHERE id = ?", (approver_id,))
 
+    def _to_approver_invite_response(self, row: dict[str, Any]) -> ApproverInviteResponse:
+        return ApproverInviteResponse(
+            token=row["token"],
+            approver_id=row["approver_id"],
+            email=row["email"],
+            display_name=row.get("display_name"),
+            invite_url=f"{self._settings.base_url}/invites/{row['token']}",
+            expires_at=row["expires_at"],
+            consumed_at=row.get("consumed_at"),
+        )
+
     def _to_approval_response(self, row: dict[str, Any]) -> ApprovalRequestResponse:
         return ApprovalRequestResponse(
             id=row["id"],
+            producer_id=row.get("producer_id"),
             action_type=row["action_type"],
             action_ref=row.get("action_ref"),
             action_hash=row["action_hash"],
@@ -1382,4 +2117,5 @@ class ClawPassService:
             expires_at=row["expires_at"],
             decided_at=row.get("decided_at"),
             callback_url=row.get("callback_url"),
+            approval_url=self._approval_url(row["id"]),
         )

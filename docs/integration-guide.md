@@ -6,15 +6,28 @@ This guide is for systems that need to submit high-risk actions to ClawPass and 
 
 A producer system should treat ClawPass as the approval source of truth.
 
+Producer authentication model:
+- create the producer in `/app`
+- issue a one-time-visible API key from the operator app
+- send that key as `Authorization: Bearer cpk_<key_id>.<secret>`
+
 The normal flow is:
 1. Compute a stable action hash for the exact downstream payload.
-2. Create an approval request in ClawPass.
-3. Wait for a final state by polling or by consuming webhook events.
-4. Before executing the downstream side effect, verify the returned `action_hash` and any local `action_ref` assumptions still match the intended action.
+2. Create an approval request in ClawPass under producer API-key auth.
+3. Hold the risky side effect while the request is `PENDING`.
+4. Wait for a final state by polling or by consuming webhook events.
+5. Re-fetch the request from ClawPass under producer auth.
+6. Before executing the downstream side effect, verify the returned `status`, `request_id`, `producer_id`, `action_hash`, and any local `action_ref` assumptions still match the intended action.
 
 Do not treat a bare callback as enough proof to execute arbitrary work without checking the original action binding.
 
 ## Creating an approval request
+
+Authentication:
+
+```http
+Authorization: Bearer cpk_<key_id>.<secret>
+```
 
 Required request fields:
 - `action_type`
@@ -33,6 +46,16 @@ Common optional fields:
 
 If the producer may retry the request-creation call, send a caller-controlled `request_id`. ClawPass treats duplicates as a conflict instead of creating silent duplicates.
 
+## What the response gives back
+
+Approval-request responses now include:
+- `producer_id`: the authenticated ClawPass producer identity derived from the API key
+- `approval_url`: the human-facing approval link for the request
+
+The producer should treat `producer_id` as audited server state, not as caller-supplied metadata.
+
+The `approval_url` is the human-facing link that ClawPass returns to the producer. Share that URL with the intended approver, or embed it in operator tooling, instead of constructing approval URLs yourself.
+
 ## Final approval states
 
 A producer should treat these states as terminal:
@@ -47,6 +70,8 @@ A producer should treat these states as terminal:
 
 If you do not want to rely only on callbacks, poll:
 - `GET /v1/approval-requests/{request_id}`
+
+This route also requires the producer bearer token.
 
 This is also the safest fallback when your callback consumer is degraded.
 
@@ -67,7 +92,10 @@ See [Webhook Operations](./webhook-operations.md) for delivery semantics and hea
 ```python
 from clawpass_sdk_py import ClawPassClient
 
-client = ClawPassClient("http://localhost:8081")
+client = ClawPassClient(
+    "http://localhost:8081",
+    api_key="cpk_<key_id>.<secret>",
+)
 request = client.create_approval_request(
     request_id="deploy-prod-2026-04-17",
     action_type="outbound.send",
@@ -78,30 +106,30 @@ request = client.create_approval_request(
 )
 
 current = client.get_approval_request(request["id"])
-summary = client.get_webhook_summary()
+if current["status"] == "APPROVED":
+    assert current["producer_id"] == request["producer_id"]
+    assert current["action_hash"] == request["action_hash"]
 ```
 
 Useful Python SDK methods:
-- `create_approval_request(...)`
+- `create_gated_action(...)`
 - `get_approval_request(...)`
 - `list_approval_requests(...)`
 - `cancel_approval_request(...)`
-- `list_webhook_events(...)`
-- `get_webhook_summary()`
-- `list_webhook_endpoint_summaries(...)`
-- `mute_webhook_endpoint(...)`
-- `unmute_webhook_endpoint(...)`
-- `prune_webhook_events()`
-- `get_webhook_prune_history(...)`
-- `redeliver_webhook_event(...)`
-- `retry_webhook_event_now(...)`
+- `wait_for_final_decision(...)`
+- `verify_approved_request(...)`
+
+The Python SDK fits the producer loop best. Admin-only routes can still be called if you supply the browser session cookie and CSRF header explicitly through `headers=...`, but `/app` remains the primary operator experience.
 
 ## TypeScript SDK quickstart
 
 ```ts
 import { ClawPassClient } from "clawpass-sdk";
 
-const client = new ClawPassClient({ baseUrl: "http://localhost:8081" });
+const client = new ClawPassClient({
+  baseUrl: "http://localhost:8081",
+  apiKey: "cpk_<key_id>.<secret>",
+});
 const request = await client.createApprovalRequest({
   request_id: "deploy-prod-2026-04-17",
   action_type: "outbound.send",
@@ -111,10 +139,17 @@ const request = await client.createApprovalRequest({
 });
 
 const current = await client.getApprovalRequest(request.id);
-const events = await client.listWebhookEvents({ requestId: request.id, limit: 20 });
+if (current.status === "APPROVED") {
+  if (current.producer_id !== request.producer_id) throw new Error("Producer mismatch");
+  if (current.action_hash !== request.action_hash) throw new Error("Hash mismatch");
+}
 ```
 
 Useful TypeScript SDK methods mirror the HTTP API closely.
+For the producer hold/resume loop, prefer:
+- `createGatedAction(...)`
+- `waitForFinalDecision(...)`
+- `verifyApprovedRequest(...)`
 
 ## HTTP routes most producer systems use
 
@@ -124,16 +159,14 @@ Approval flow:
 - `GET /v1/approval-requests?status=...`
 - `POST /v1/approval-requests/{request_id}/cancel`
 
-Operator and webhook visibility:
-- `GET /v1/webhook-events`
-- `GET /v1/webhook-summary`
-- `GET /v1/webhook-endpoints/summary`
+Operator routes such as webhook visibility, producer issuance, and approval decisions are admin-session routes intended for `/app`.
 
 ## Callback consumer checklist
 
 Before executing the downstream action on an approved event, the consumer should check:
 - the event is for the expected `request_id`
 - the payload `status` is `APPROVED`
+- the payload `producer_id` matches the producer that created the request
 - the payload `action_hash` still matches the intended action payload
 - the local side effect has not already been executed for that request id
 

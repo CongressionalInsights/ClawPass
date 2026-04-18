@@ -6,6 +6,554 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/setup/status": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Bootstrap Status",
+        "operationId": "bootstrap_status_v1_setup_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/setup/bootstrap/start": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Setup Bootstrap Start",
+        "operationId": "setup_bootstrap_start_v1_setup_bootstrap_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/setup/bootstrap/complete": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Setup Bootstrap Complete",
+        "operationId": "setup_bootstrap_complete_v1_setup_bootstrap_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/login/start": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Login Start",
+        "operationId": "login_start_v1_auth_login_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoginStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/login/complete": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Login Complete",
+        "operationId": "login_complete_v1_auth_login_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/admin/login/start": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Admin Login Start",
+        "operationId": "admin_login_start_v1_auth_admin_login_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoginStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/admin/login/complete": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Admin Login Complete",
+        "operationId": "admin_login_complete_v1_auth_admin_login_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Human Session",
+        "operationId": "human_session_v1_auth_session_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/session": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Admin Session",
+        "operationId": "admin_session_v1_admin_session_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Logout",
+        "operationId": "logout_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "type": "object",
+                  "title": "Response Logout V1 Auth Logout Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/approval-links/{request_id}": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Approval Link",
+        "operationId": "approval_link_v1_approval_links__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalLinkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Approver Invite",
+        "operationId": "approver_invite_v1_invites__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproverInviteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}/start": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Invite Start",
+        "operationId": "invite_start_v1_invites__token__start_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthnRegisterStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}/complete": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Invite Complete",
+        "operationId": "invite_complete_v1_invites__token__complete_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAuthnRegisterCompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/webauthn/register/start": {
       "post": {
         "tags": [
@@ -13,15 +561,33 @@
         ],
         "summary": "Webauthn Register Start",
         "operationId": "webauthn_register_start_v1_webauthn_register_start_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WebAuthnRegisterStartRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -54,15 +620,33 @@
         ],
         "summary": "Webauthn Register Complete",
         "operationId": "webauthn_register_complete_v1_webauthn_register_complete_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WebAuthnRegisterCompleteRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -88,6 +672,532 @@
         }
       }
     },
+    "/v1/signers/ethereum/challenge": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Ethereum Signer Challenge",
+        "operationId": "ethereum_signer_challenge_v1_signers_ethereum_challenge_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EthereumSignerChallengeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EthereumSignerChallengeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/signers/ethereum/verify": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Ethereum Signer Verify",
+        "operationId": "ethereum_signer_verify_v1_signers_ethereum_verify_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EthereumSignerVerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EthereumSignerVerifyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/approvers": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "List Approvers",
+        "operationId": "list_approvers_v1_operator_approvers_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApproverResponse"
+                  },
+                  "title": "Response List Approvers V1 Operator Approvers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/approver-invites": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "List Approver Invites",
+        "operationId": "list_approver_invites_v1_operator_approver_invites_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApproverInviteResponse"
+                  },
+                  "title": "Response List Approver Invites V1 Operator Approver Invites Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Create Approver Invite",
+        "operationId": "create_approver_invite_v1_operator_approver_invites_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproverInviteCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproverInviteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/producers": {
+      "get": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "List Producers",
+        "operationId": "list_producers_v1_operator_producers_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProducerResponse"
+                  },
+                  "title": "Response List Producers V1 Operator Producers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Create Producer",
+        "operationId": "create_producer_v1_operator_producers_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProducerCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProducerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/producers/{producer_id}/keys": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Issue Producer Key",
+        "operationId": "issue_producer_key_v1_operator_producers__producer_id__keys_post",
+        "parameters": [
+          {
+            "name": "producer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Producer Id"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProducerKeyCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProducerKeyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/producers/{producer_id}/keys/{key_id}/revoke": {
+      "post": {
+        "tags": [
+          "clawpass"
+        ],
+        "summary": "Revoke Producer Key",
+        "operationId": "revoke_producer_key_v1_operator_producers__producer_id__keys__key_id__revoke_post",
+        "parameters": [
+          {
+            "name": "producer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Producer Id"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key Id"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProducerKeyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/approval-requests": {
       "post": {
         "tags": [
@@ -95,6 +1205,24 @@
         ],
         "summary": "Create Approval Request",
         "operationId": "create_approval_request_v1_approval_requests_post",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -150,6 +1278,22 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "responses": {
@@ -196,6 +1340,22 @@
               "type": "string",
               "title": "Request Id"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "responses": {
@@ -237,6 +1397,38 @@
             "schema": {
               "type": "string",
               "title": "Request Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
             }
           }
         ],
@@ -290,6 +1482,22 @@
               "type": "string",
               "title": "Request Id"
             }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
           }
         ],
         "requestBody": {
@@ -342,6 +1550,22 @@
               "type": "string",
               "title": "Request Id"
             }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
           }
         ],
         "requestBody": {
@@ -378,88 +1602,6 @@
         }
       }
     },
-    "/v1/signers/ethereum/challenge": {
-      "post": {
-        "tags": [
-          "clawpass"
-        ],
-        "summary": "Ethereum Signer Challenge",
-        "operationId": "ethereum_signer_challenge_v1_signers_ethereum_challenge_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EthereumSignerChallengeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EthereumSignerChallengeResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/signers/ethereum/verify": {
-      "post": {
-        "tags": [
-          "clawpass"
-        ],
-        "summary": "Ethereum Signer Verify",
-        "operationId": "ethereum_signer_verify_v1_signers_ethereum_verify_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EthereumSignerVerifyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EthereumSignerVerifyResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/approvers/{approver_id}/summary": {
       "get": {
         "tags": [
@@ -475,6 +1617,22 @@
             "schema": {
               "type": "string",
               "title": "Approver Id"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
             }
           }
         ],
@@ -601,6 +1759,22 @@
               ],
               "title": "Cursor"
             }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
           }
         ],
         "responses": {
@@ -638,6 +1812,24 @@
         ],
         "summary": "Webhook Summary",
         "operationId": "webhook_summary_v1_webhook_summary_get",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -645,6 +1837,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WebhookDeliverySummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -670,6 +1872,22 @@
               "minimum": 1,
               "default": 20,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
             }
           }
         ],
@@ -708,15 +1926,33 @@
         ],
         "summary": "Mute Webhook Endpoint",
         "operationId": "mute_webhook_endpoint_v1_webhook_endpoints_mute_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WebhookEndpointMuteRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -749,15 +1985,33 @@
         ],
         "summary": "Unmute Webhook Endpoint",
         "operationId": "unmute_webhook_endpoint_v1_webhook_endpoints_unmute_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WebhookEndpointUnmuteRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -790,6 +2044,24 @@
         ],
         "summary": "Prune Webhook Events",
         "operationId": "prune_webhook_events_v1_webhook_events_prune_post",
+        "parameters": [
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -797,6 +2069,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WebhookPruneResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -822,6 +2104,22 @@
               "minimum": 1,
               "default": 20,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
             }
           }
         ],
@@ -869,6 +2167,22 @@
               "type": "string",
               "title": "Event Id"
             }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
+            }
           }
         ],
         "responses": {
@@ -910,6 +2224,22 @@
             "schema": {
               "type": "string",
               "title": "Event Id"
+            }
+          },
+          {
+            "name": "X-ClawPass-CSRF",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Clawpass-Csrf"
             }
           }
         ],
@@ -974,15 +2304,315 @@
           }
         }
       }
+    },
+    "/setup": {
+      "get": {
+        "summary": "Setup Page",
+        "operationId": "setup_page_setup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "get": {
+        "summary": "Login Page",
+        "operationId": "login_page_login_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app": {
+      "get": {
+        "summary": "App Page",
+        "operationId": "app_page_app_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approve/{request_id}": {
+      "get": {
+        "summary": "Approval Page",
+        "operationId": "approval_page_approve__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invites/{token}": {
+      "get": {
+        "summary": "Invite Page",
+        "operationId": "invite_page_invites__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AdminLoginCompleteRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "credential": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Credential"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "credential"
+        ],
+        "title": "AdminLoginCompleteRequest"
+      },
+      "AdminLoginStartResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "public_key_options": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Public Key Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "public_key_options"
+        ],
+        "title": "AdminLoginStartResponse"
+      },
+      "AdminSessionResponse": {
+        "properties": {
+          "admin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Id"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "passkey_count": {
+            "type": "integer",
+            "title": "Passkey Count"
+          },
+          "ledger_webauthn_count": {
+            "type": "integer",
+            "title": "Ledger Webauthn Count"
+          },
+          "ethereum_signer_count": {
+            "type": "integer",
+            "title": "Ethereum Signer Count"
+          },
+          "is_admin": {
+            "type": "boolean",
+            "title": "Is Admin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "admin_id",
+          "approver_id",
+          "email",
+          "display_name",
+          "passkey_count",
+          "ledger_webauthn_count",
+          "ethereum_signer_count",
+          "is_admin"
+        ],
+        "title": "AdminSessionResponse"
+      },
+      "ApprovalLinkResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "producer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Producer Id"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "action_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Ref"
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "approval_url": {
+            "type": "string",
+            "title": "Approval Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "producer_id",
+          "action_type",
+          "action_ref",
+          "risk_level",
+          "status",
+          "created_at",
+          "expires_at",
+          "approval_url"
+        ],
+        "title": "ApprovalLinkResponse"
+      },
       "ApprovalRequestResponse": {
         "properties": {
           "id": {
             "type": "string",
             "title": "Id"
+          },
+          "producer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Producer Id"
           },
           "action_type": {
             "type": "string",
@@ -1093,11 +2723,23 @@
               }
             ],
             "title": "Callback Url"
+          },
+          "approval_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Url"
           }
         },
         "type": "object",
         "required": [
           "id",
+          "producer_id",
           "action_type",
           "action_ref",
           "action_hash",
@@ -1112,9 +2754,163 @@
           "created_at",
           "expires_at",
           "decided_at",
-          "callback_url"
+          "callback_url",
+          "approval_url"
         ],
         "title": "ApprovalRequestResponse"
+      },
+      "ApproverInviteCreateRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "expires_in_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Minutes"
+          },
+          "next_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ApproverInviteCreateRequest"
+      },
+      "ApproverInviteResponse": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "approver_id": {
+            "type": "string",
+            "title": "Approver Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "invite_url": {
+            "type": "string",
+            "title": "Invite Url"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "consumed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "approver_id",
+          "email",
+          "display_name",
+          "invite_url",
+          "expires_at",
+          "consumed_at"
+        ],
+        "title": "ApproverInviteResponse"
+      },
+      "ApproverResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "passkey_count": {
+            "type": "integer",
+            "title": "Passkey Count"
+          },
+          "ledger_webauthn_count": {
+            "type": "integer",
+            "title": "Ledger Webauthn Count"
+          },
+          "ethereum_signer_count": {
+            "type": "integer",
+            "title": "Ethereum Signer Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "created_at",
+          "passkey_count",
+          "ledger_webauthn_count",
+          "ethereum_signer_count"
+        ],
+        "title": "ApproverResponse"
       },
       "ApproverSummary": {
         "properties": {
@@ -1160,6 +2956,102 @@
           "ethereum_signer_count"
         ],
         "title": "ApproverSummary"
+      },
+      "BootstrapCompleteRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "credential": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Credential"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "credential"
+        ],
+        "title": "BootstrapCompleteRequest"
+      },
+      "BootstrapStartRequest": {
+        "properties": {
+          "bootstrap_token": {
+            "type": "string",
+            "title": "Bootstrap Token"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bootstrap_token",
+          "email"
+        ],
+        "title": "BootstrapStartRequest"
+      },
+      "BootstrapStartResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "public_key_options": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Public Key Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "public_key_options"
+        ],
+        "title": "BootstrapStartResponse"
+      },
+      "BootstrapStatusResponse": {
+        "properties": {
+          "initialized": {
+            "type": "boolean",
+            "title": "Initialized"
+          },
+          "bootstrap_configured": {
+            "type": "boolean",
+            "title": "Bootstrap Configured"
+          }
+        },
+        "type": "object",
+        "required": [
+          "initialized",
+          "bootstrap_configured"
+        ],
+        "title": "BootstrapStatusResponse"
       },
       "CancelApprovalRequest": {
         "properties": {
@@ -1295,7 +3187,14 @@
       "DecisionStartRequest": {
         "properties": {
           "approver_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Approver Id"
           },
           "decision": {
@@ -1318,7 +3217,6 @@
         },
         "type": "object",
         "required": [
-          "approver_id",
           "decision",
           "method"
         ],
@@ -1486,6 +3384,154 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "LoginStartRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "LoginStartRequest"
+      },
+      "ProducerCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProducerCreateRequest"
+      },
+      "ProducerKeyCreateRequest": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "title": "ProducerKeyCreateRequest"
+      },
+      "ProducerKeyResponse": {
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "title": "Key Id"
+          },
+          "producer_id": {
+            "type": "string",
+            "title": "Producer Id"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key_id",
+          "producer_id",
+          "api_key",
+          "created_at",
+          "label"
+        ],
+        "title": "ProducerKeyResponse"
+      },
+      "ProducerResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "revoked_at"
+        ],
+        "title": "ProducerResponse"
       },
       "ValidationError": {
         "properties": {

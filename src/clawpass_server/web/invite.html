@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClawPass Invite</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <header class="topbar">
+      <div>
+        <h1>ClawPass</h1>
+        <p class="subtitle">Approver invite</p>
+      </div>
+      <div class="status" id="global-status">Loading</div>
+    </header>
+    <main class="layout">
+      <section class="panel">
+        <h2>Complete invite</h2>
+        <div class="summary" id="invite-summary">Loading invite…</div>
+        <p class="note" id="device-hint"></p>
+        <div class="actions">
+          <button id="btn-accept" class="btn btn-primary">Enroll passkey</button>
+        </div>
+      </section>
+      <section class="log-panel">
+        <h3>Activity</h3>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/assets/invite.js"></script>
+  </body>
+</html>

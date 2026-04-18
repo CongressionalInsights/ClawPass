@@ -1,12 +1,15 @@
-const state = {
-  approverId: null,
-  webhookFilter: "attention",
-  webhookEndpointFilter: null,
-};
+import {
+  $,
+  api,
+  assertionCredentialToJSON,
+  normalizeCreationOptions,
+  registrationCredentialToJSON,
+  updateDeviceHint,
+} from "./common.js";
 
-const $ = (id) => document.getElementById(id);
 const logEl = $("log");
 const globalStatus = $("global-status");
+let currentSession = null;
 
 function log(message, data) {
   const line = `[${new Date().toISOString()}] ${message}`;
@@ -15,166 +18,6 @@ function log(message, data) {
 
 function setStatus(value) {
   globalStatus.textContent = value;
-}
-
-function toBase64Url(bytes) {
-  const binary = String.fromCharCode(...new Uint8Array(bytes));
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function fromBase64Url(base64url) {
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function normalizeCreationOptions(publicKey) {
-  return {
-    ...publicKey,
-    challenge: fromBase64Url(publicKey.challenge),
-    user: {
-      ...publicKey.user,
-      id: fromBase64Url(publicKey.user.id),
-    },
-    excludeCredentials: (publicKey.excludeCredentials || []).map((item) => ({
-      ...item,
-      id: fromBase64Url(item.id),
-    })),
-  };
-}
-
-function normalizeRequestOptions(publicKey) {
-  return {
-    ...publicKey,
-    challenge: fromBase64Url(publicKey.challenge),
-    allowCredentials: (publicKey.allowCredentials || []).map((item) => ({
-      ...item,
-      id: fromBase64Url(item.id),
-    })),
-  };
-}
-
-function registrationCredentialToJSON(credential) {
-  return {
-    id: credential.id,
-    rawId: toBase64Url(credential.rawId),
-    type: credential.type,
-    response: {
-      attestationObject: toBase64Url(credential.response.attestationObject),
-      clientDataJSON: toBase64Url(credential.response.clientDataJSON),
-      transports: credential.response.getTransports ? credential.response.getTransports() : [],
-    },
-    clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
-  };
-}
-
-function assertionCredentialToJSON(credential) {
-  return {
-    id: credential.id,
-    rawId: toBase64Url(credential.rawId),
-    type: credential.type,
-    response: {
-      authenticatorData: toBase64Url(credential.response.authenticatorData),
-      clientDataJSON: toBase64Url(credential.response.clientDataJSON),
-      signature: toBase64Url(credential.response.signature),
-      userHandle: credential.response.userHandle ? toBase64Url(credential.response.userHandle) : null,
-    },
-    clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
-  };
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || `${response.status} ${response.statusText}`);
-  }
-  return payload;
-}
-
-function currentIdentity() {
-  return {
-    approver_id: state.approverId,
-    email: $("email").value.trim() || undefined,
-    display_name: $("display-name").value.trim() || undefined,
-  };
-}
-
-function updateDeviceHint() {
-  const isMobile = window.matchMedia("(max-width: 900px)").matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
-  $("device-hint").textContent = isMobile
-    ? "Mobile flow: tap Create passkey to open your phone-native passkey prompt."
-    : "Desktop flow: create a local passkey or choose Use another device for cross-device passkeys.";
-}
-
-async function createPasskey({ isLedger = false, useAnotherDevice = false }) {
-  if (!window.PublicKeyCredential) {
-    throw new Error("This browser does not support passkeys/WebAuthn.");
-  }
-  setStatus("Starting passkey enrollment...");
-  const start = await api("/v1/webauthn/register/start", {
-    method: "POST",
-    body: JSON.stringify({ ...currentIdentity(), is_ledger: isLedger }),
-  });
-  state.approverId = start.approver_id;
-
-  const publicKey = normalizeCreationOptions(start.public_key_options);
-  if (useAnotherDevice) {
-    publicKey.authenticatorSelection = { ...(publicKey.authenticatorSelection || {}) };
-    delete publicKey.authenticatorSelection.authenticatorAttachment;
-    publicKey.hints = Array.from(new Set([...(publicKey.hints || []), "hybrid"]));
-  }
-
-  const cred = await navigator.credentials.create({ publicKey });
-  const complete = await api("/v1/webauthn/register/complete", {
-    method: "POST",
-    body: JSON.stringify({
-      session_id: start.session_id,
-      credential: registrationCredentialToJSON(cred),
-      label: isLedger ? "Ledger security key" : "Primary passkey",
-    }),
-  });
-  log("Passkey enrollment complete.", complete);
-  await refreshSummary();
-  setStatus("Passkey enrolled");
-}
-
-async function addEthereumSigner() {
-  if (!window.ethereum) {
-    throw new Error("No injected Ethereum wallet found (e.g. MetaMask + Ledger).\nUse passkey or Ledger security-key mode instead.");
-  }
-  const [address] = await window.ethereum.request({ method: "eth_requestAccounts" });
-  const challenge = await api("/v1/signers/ethereum/challenge", {
-    method: "POST",
-    body: JSON.stringify({ ...currentIdentity(), address, chain_id: 1 }),
-  });
-  state.approverId = challenge.approver_id;
-
-  const signature = await window.ethereum.request({
-    method: "eth_signTypedData_v4",
-    params: [address, JSON.stringify(challenge.typed_data)],
-  });
-  const verified = await api("/v1/signers/ethereum/verify", {
-    method: "POST",
-    body: JSON.stringify({ session_id: challenge.session_id, signature }),
-  });
-  log("Ethereum signer verified.", verified);
-  await refreshSummary();
-}
-
-async function refreshSummary() {
-  if (!state.approverId) {
-    $("summary").textContent = "No approver selected yet.";
-    return;
-  }
-  const summary = await api(`/v1/approvers/${state.approverId}/summary`);
-  $("summary").textContent = `Approver ${summary.email}: ${summary.passkey_count} passkeys, ${summary.ledger_webauthn_count} Ledger security keys, ${summary.ethereum_signer_count} Ethereum signer(s).`;
 }
 
 function metricCard(label, value, tone = "normal") {
@@ -190,609 +33,276 @@ function formatPercent(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function formatRelativeTime(value) {
-  const target = parseIso(value);
-  if (!target) {
-    return "now";
+async function loadSession() {
+  try {
+    currentSession = await api("/v1/auth/session");
+  } catch (error) {
+    window.location.replace("/login");
+    return;
   }
-  const deltaMs = target.getTime() - Date.now();
-  const prefix = deltaMs >= 0 ? "in" : "";
-  const suffix = deltaMs < 0 ? "ago" : "";
-  const totalSeconds = Math.max(0, Math.round(Math.abs(deltaMs) / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  const valueLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-  return [prefix, valueLabel, suffix].filter(Boolean).join(" ");
-}
-
-function formatTimestampWithRelative(value) {
-  return value ? `${value} (${formatRelativeTime(value)})` : "n/a";
-}
-
-function setWebhookEndpointFilter(callbackUrl) {
-  state.webhookEndpointFilter = callbackUrl || null;
-  const label = state.webhookEndpointFilter
-    ? `Endpoint filter: ${state.webhookEndpointFilter}`
-    : "Endpoint filter: all destinations";
-  $("webhook-endpoint-filter-state").textContent = label;
-  $("btn-clear-webhook-endpoint-filter").disabled = !state.webhookEndpointFilter;
-}
-
-function buildWebhookEventsPath(status, limit = 50) {
-  const params = new URLSearchParams({ status, limit: String(limit) });
-  if (state.webhookEndpointFilter) {
-    params.set("callback_url", state.webhookEndpointFilter);
+  if (!currentSession.is_admin) {
+    window.location.replace("/login");
+    return;
   }
-  return `/v1/webhook-events?${params.toString()}`;
+  $("session-summary").textContent = `Signed in as ${currentSession.email}. ${currentSession.passkey_count} passkey(s), ${currentSession.ledger_webauthn_count} Ledger key(s), ${currentSession.ethereum_signer_count} Ethereum signer(s).`;
+  $("security-summary").textContent = `Approver ${currentSession.email}: ${currentSession.passkey_count} passkey(s), ${currentSession.ledger_webauthn_count} Ledger security key(s), ${currentSession.ethereum_signer_count} Ethereum signer(s).`;
+  setStatus("Ready");
 }
 
-async function refreshWebhookSummary() {
+async function createPasskey({ isLedger = false, useAnotherDevice = false }) {
+  if (!window.PublicKeyCredential) {
+    throw new Error("This browser does not support passkeys/WebAuthn.");
+  }
+  setStatus("Starting passkey enrollment…");
+  const start = await api("/v1/webauthn/register/start", {
+    method: "POST",
+    body: JSON.stringify({ is_ledger: isLedger }),
+  });
+  const publicKey = normalizeCreationOptions(start.public_key_options);
+  if (useAnotherDevice) {
+    publicKey.authenticatorSelection = { ...(publicKey.authenticatorSelection || {}) };
+    delete publicKey.authenticatorSelection.authenticatorAttachment;
+    publicKey.hints = Array.from(new Set([...(publicKey.hints || []), "hybrid"]));
+  }
+  const credential = await navigator.credentials.create({ publicKey });
+  const complete = await api("/v1/webauthn/register/complete", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: start.session_id,
+      credential: registrationCredentialToJSON(credential),
+      label: isLedger ? "Ledger security key" : "Passkey",
+    }),
+  });
+  log("Passkey enrollment complete.", complete);
+  await loadSession();
+}
+
+async function addEthereumSigner() {
+  if (!window.ethereum) {
+    throw new Error("No injected Ethereum wallet found.");
+  }
+  const [address] = await window.ethereum.request({ method: "eth_requestAccounts" });
+  const challenge = await api("/v1/signers/ethereum/challenge", {
+    method: "POST",
+    body: JSON.stringify({ address, chain_id: 1 }),
+  });
+  const signature = await window.ethereum.request({
+    method: "eth_signTypedData_v4",
+    params: [address, JSON.stringify(challenge.typed_data)],
+  });
+  const verified = await api("/v1/signers/ethereum/verify", {
+    method: "POST",
+    body: JSON.stringify({ session_id: challenge.session_id, signature }),
+  });
+  log("Ethereum signer enrolled.", verified);
+  await loadSession();
+}
+
+function renderProducer(producer) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  card.innerHTML = `
+    <strong>${producer.name}</strong>
+    <div class="request-meta">${producer.id}</div>
+    <div class="request-meta">${producer.description || "No description"}</div>
+    <div class="actions"></div>
+  `;
+  const actions = card.querySelector(".actions");
+
+  const issueButton = document.createElement("button");
+  issueButton.className = "btn";
+  issueButton.textContent = "Issue API key";
+  issueButton.onclick = async () => {
+    try {
+      setStatus("Issuing producer API key…");
+      const key = await api(`/v1/operator/producers/${producer.id}/keys`, {
+        method: "POST",
+        body: JSON.stringify({ label: "primary" }),
+      });
+      $("key-output").textContent = `Issued key for ${producer.name}: ${key.api_key}`;
+      log("Producer API key issued.", key);
+      setStatus("Ready");
+    } catch (error) {
+      alert(String(error));
+      setStatus("Error");
+    }
+  };
+  actions.appendChild(issueButton);
+  return card;
+}
+
+async function refreshProducers() {
+  const producers = await api("/v1/operator/producers");
+  const container = $("producer-list");
+  container.innerHTML = "";
+  if (!producers.length) {
+    const empty = document.createElement("div");
+    empty.className = "request-card";
+    empty.textContent = "No producers created yet.";
+    container.appendChild(empty);
+    return;
+  }
+  producers.forEach((producer) => container.appendChild(renderProducer(producer)));
+}
+
+async function createProducer() {
+  const name = $("producer-name").value.trim();
+  const description = $("producer-description").value.trim();
+  if (!name) {
+    throw new Error("Producer name is required.");
+  }
+  const producer = await api("/v1/operator/producers", {
+    method: "POST",
+    body: JSON.stringify({ name, description: description || null }),
+  });
+  log("Producer created.", producer);
+  $("producer-name").value = "";
+  $("producer-description").value = "";
+  await refreshProducers();
+}
+
+function renderApprover(approver) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  card.innerHTML = `
+    <strong>${approver.email}</strong>
+    <div class="request-meta">${approver.display_name || "No display name"}</div>
+    <div class="request-meta">passkeys=${approver.passkey_count} · ledger keys=${approver.ledger_webauthn_count} · ethereum signers=${approver.ethereum_signer_count}</div>
+  `;
+  return card;
+}
+
+async function refreshApprovers() {
+  const approvers = await api("/v1/operator/approvers");
+  const invites = await api("/v1/operator/approver-invites");
+  const container = $("approver-list");
+  container.innerHTML = "";
+  if (!approvers.length) {
+    const empty = document.createElement("div");
+    empty.className = "request-card";
+    empty.textContent = "No approvers found.";
+    container.appendChild(empty);
+  } else {
+    approvers.forEach((approver) => container.appendChild(renderApprover(approver)));
+  }
+  if (invites.length) {
+    $("invite-output").textContent = `Latest invite: ${invites[0].invite_url}`;
+  }
+}
+
+async function createInvite() {
+  const email = $("invite-email").value.trim().toLowerCase();
+  const displayName = $("invite-display-name").value.trim();
+  if (!email) {
+    throw new Error("Invite email is required.");
+  }
+  const invite = await api("/v1/operator/approver-invites", {
+    method: "POST",
+    body: JSON.stringify({
+      email,
+      display_name: displayName || null,
+      expires_in_minutes: 1440,
+    }),
+  });
+  $("invite-output").textContent = `Invite created: ${invite.invite_url}`;
+  $("invite-email").value = "";
+  $("invite-display-name").value = "";
+  log("Approver invite created.", invite);
+  await refreshApprovers();
+}
+
+function renderWebhookEndpoint(summary) {
+  const card = document.createElement("div");
+  card.className = "request-card";
+  const muted = Boolean(summary.muted_until);
+  card.innerHTML = `
+    <strong>${summary.callback_url}</strong>
+    <div class="request-meta">state=${summary.health_state} · queued=${summary.queued_count} · failed=${summary.failed_count} · dead-lettered=${summary.dead_lettered_count}</div>
+    <div class="request-meta">failure-rate=${formatPercent(summary.failure_rate)} · consecutive-failures=${summary.consecutive_failure_count}</div>
+    <div class="request-meta">muted=${summary.muted_until || "not muted"} · last-event=${summary.last_event_at || "n/a"}</div>
+    ${summary.latest_error ? `<div class="request-meta">latest-error=${summary.latest_error}</div>` : ""}
+    <div class="actions"></div>
+  `;
+  const actions = card.querySelector(".actions");
+  const toggleButton = document.createElement("button");
+  toggleButton.className = "btn";
+  toggleButton.textContent = muted ? "Resume endpoint" : "Mute endpoint";
+  toggleButton.onclick = async () => {
+    setStatus(muted ? "Resuming endpoint…" : "Muting endpoint…");
+    await api(muted ? "/v1/webhook-endpoints/unmute" : "/v1/webhook-endpoints/mute", {
+      method: "POST",
+      body: JSON.stringify(
+        muted
+          ? { callback_url: summary.callback_url }
+          : { callback_url: summary.callback_url, reason: "operator pause" },
+      ),
+    });
+    await refreshWebhookOps();
+    setStatus("Ready");
+  };
+  actions.appendChild(toggleButton);
+  return card;
+}
+
+async function refreshWebhookOps() {
   const summary = await api("/v1/webhook-summary");
   $("webhook-health").textContent = `Health: ${summary.health_state}`;
-  const meta = [];
-  if (summary.oldest_queued_at) {
-    meta.push(`Oldest queued event: ${summary.oldest_queued_at}`);
-  }
-  if (summary.last_event_at) {
-    meta.push(`Latest webhook event: ${summary.last_event_at}`);
-  }
-  $("webhook-summary-meta").textContent = meta.length ? meta.join(" · ") : "No webhook activity yet.";
+  $("webhook-summary-meta").textContent = `Backlog ${summary.backlog_count}, scheduled retries ${summary.scheduled_retry_count}, dead-lettered ${summary.dead_lettered_count}`;
   $("webhook-alerts").innerHTML = summary.alerts.length
     ? summary.alerts.map((message) => `<div class="alert-item warning">${message}</div>`).join("")
     : '<div class="alert-item ok">No active webhook alerts.</div>';
   $("webhook-stats").innerHTML = [
     metricCard("Backlog", summary.backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
-    metricCard("Scheduled retries", summary.scheduled_retry_count, summary.scheduled_retry_count ? "warn" : "normal"),
-    metricCard("Leased backlog", summary.leased_backlog_count),
-    metricCard("Stalled backlog", summary.stalled_backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
+    metricCard("Stalled", summary.stalled_backlog_count, summary.stalled_backlog_count ? "warn" : "normal"),
     metricCard("Failure rate", formatPercent(summary.failure_rate), summary.failed_count ? "danger" : "normal"),
     metricCard("Dead-lettered", summary.dead_lettered_count, summary.dead_lettered_count ? "danger" : "normal"),
-    metricCard("Redelivery backlog", summary.redelivery_backlog_count, summary.redelivery_backlog_count ? "warn" : "normal"),
-    metricCard("Redelivery failures", summary.redelivery_failed_count, summary.redelivery_failed_count ? "danger" : "normal"),
   ].join("");
-}
 
-function parseIso(value) {
-  return value ? new Date(value) : null;
-}
-
-function isQueuedEventDue(event) {
-  const availableAt = parseIso(event.available_at);
-  return !availableAt || availableAt <= new Date();
-}
-
-function isQueuedEventLeased(event) {
-  const leaseExpiresAt = parseIso(event.lease_expires_at);
-  return Boolean(leaseExpiresAt && leaseExpiresAt > new Date());
-}
-
-function isStalledWebhookEvent(event) {
-  return event.status === "queued" && isQueuedEventDue(event) && !isQueuedEventLeased(event);
-}
-
-function isDeadLetteredWebhookEvent(event) {
-  return Boolean(event.dead_lettered_at);
-}
-
-function resolveRetryRootId(event, eventById, cache) {
-  if (cache.has(event.id)) {
-    return cache.get(event.id);
-  }
-  let rootId = event.id;
-  if (event.retry_parent_id) {
-    const parent = eventById.get(event.retry_parent_id);
-    rootId = parent ? resolveRetryRootId(parent, eventById, cache) : event.retry_parent_id;
-  }
-  cache.set(event.id, rootId);
-  return rootId;
-}
-
-function buildWebhookChainStats(events) {
-  const eventById = new Map(events.map((event) => [event.id, event]));
-  const rootCache = new Map();
-  const chainStatsByRoot = new Map();
-  events.forEach((event) => {
-    const rootId = resolveRetryRootId(event, eventById, rootCache);
-    const stats = chainStatsByRoot.get(rootId) || {
-      eventCount: 0,
-      failedCount: 0,
-      deadLetteredCount: 0,
-      maxRetryAttempt: 0,
-      latestAvailableAt: null,
-    };
-    stats.eventCount += 1;
-    if (event.status === "failed") {
-      stats.failedCount += 1;
-    }
-    if (event.dead_lettered_at) {
-      stats.deadLetteredCount += 1;
-    }
-    stats.maxRetryAttempt = Math.max(stats.maxRetryAttempt, event.retry_attempt || 0);
-    if (event.available_at && (!stats.latestAvailableAt || event.available_at > stats.latestAvailableAt)) {
-      stats.latestAvailableAt = event.available_at;
-    }
-    chainStatsByRoot.set(rootId, stats);
-  });
-  return { chainStatsByRoot, rootByEventId: rootCache };
-}
-
-function setWebhookFilter(filter) {
-  state.webhookFilter = filter;
-  [
-    ["attention", "btn-webhook-filter-attention"],
-    ["failed", "btn-webhook-filter-failed"],
-    ["stalled", "btn-webhook-filter-stalled"],
-  ].forEach(([value, id]) => {
-    $(id).classList.toggle("active", value === filter);
-  });
-}
-
-function renderWebhookEventCard(event, chainStats) {
-  const card = document.createElement("div");
-  card.className = "request-card";
-  const retryLabel = event.retry_attempt ? `retry=${event.retry_attempt}` : "initial";
-  const scheduleLabel = event.available_at
-    ? `available=${event.available_at} (${formatRelativeTime(event.available_at)})`
-    : "available=now";
-  const stateLabel = isDeadLetteredWebhookEvent(event)
-    ? "dead-lettered"
-    : isStalledWebhookEvent(event)
-      ? "stalled"
-      : event.status;
-  const historyBits = [
-    `chain=${chainStats.eventCount}`,
-    `failures=${chainStats.failedCount}`,
-    `max-retry=${chainStats.maxRetryAttempt}`,
-  ];
-  if (chainStats.deadLetteredCount > 0) {
-    historyBits.push(`dead-lettered=${chainStats.deadLetteredCount}`);
-  }
-  card.innerHTML = `
-    <strong>${event.id}</strong>
-    <div class="request-meta">${event.event_type} · request=${event.request_id} · state=${stateLabel}</div>
-    ${event.callback_url ? `<div class="request-meta">endpoint=${event.callback_url}</div>` : ""}
-    <div class="request-meta">${retryLabel} · attempts=${event.attempt_count} · ${scheduleLabel}</div>
-    <div class="request-meta">${historyBits.join(" · ")}</div>
-    ${event.retry_parent_id ? `<div class="request-meta">retry-parent=${event.retry_parent_id}</div>` : ""}
-    ${event.dead_lettered_at ? `<div class="request-meta">dead-lettered=${event.dead_lettered_at}</div>` : ""}
-    ${event.dead_letter_reason ? `<div class="request-meta">dead-letter-reason=${event.dead_letter_reason}</div>` : ""}
-    ${event.last_error ? `<div class="request-meta">error=${event.last_error}</div>` : ""}
-    <div class="actions"></div>
-  `;
-  const actions = card.querySelector(".actions");
-
-  if (event.status === "failed") {
-    const button = document.createElement("button");
-    button.className = "btn";
-    button.textContent = "Redeliver";
-    button.onclick = async () => {
-      try {
-        setStatus("Redelivering webhook...");
-        await api(`/v1/webhook-events/${event.id}/redeliver`, { method: "POST", body: JSON.stringify({}) });
-        await refreshWebhookOps();
-        setStatus("Ready");
-      } catch (error) {
-        log("Webhook redelivery failed", { event_id: event.id, error: String(error) });
-        alert(String(error));
-        setStatus("Error");
-      }
-    };
-    actions.appendChild(button);
-  }
-
-  if (isStalledWebhookEvent(event)) {
-    const button = document.createElement("button");
-    button.className = "btn";
-    button.textContent = "Retry now";
-    button.onclick = async () => {
-      try {
-        setStatus("Retrying stalled webhook...");
-        await api(`/v1/webhook-events/${event.id}/retry-now`, { method: "POST", body: JSON.stringify({}) });
-        await refreshWebhookOps();
-        setStatus("Ready");
-      } catch (error) {
-        log("Webhook retry-now failed", { event_id: event.id, error: String(error) });
-        alert(String(error));
-        setStatus("Error");
-      }
-    };
-    actions.appendChild(button);
-  }
-
-  return card;
-}
-
-function renderWebhookEndpointCard(summary) {
-  const card = document.createElement("div");
-  card.className = "request-card";
-  const nextAttempt = summary.next_attempt_at ? formatTimestampWithRelative(summary.next_attempt_at) : "none scheduled";
-  const muteLabel = summary.muted_until ? formatTimestampWithRelative(summary.muted_until) : "not muted";
-  card.innerHTML = `
-    <strong>${summary.callback_url}</strong>
-    <div class="request-meta">state=${summary.health_state} · total=${summary.total_events} · delivered=${summary.delivered_count} · failed=${summary.failed_count}</div>
-    <div class="request-meta">queued=${summary.queued_count} · stalled=${summary.stalled_count} · dead-lettered=${summary.dead_lettered_count} · failure-rate=${formatPercent(summary.failure_rate)}</div>
-    <div class="request-meta">muted=${muteLabel} · consecutive-failures=${summary.consecutive_failure_count}</div>
-    <div class="request-meta">next-attempt=${nextAttempt}</div>
-    <div class="request-meta">last-event=${summary.last_event_at || "n/a"}</div>
-    ${summary.mute_reason ? `<div class="request-meta">mute-reason=${summary.mute_reason}</div>` : ""}
-    ${summary.latest_error ? `<div class="request-meta">latest-error=${summary.latest_error}</div>` : ""}
-    <div class="actions"></div>
-  `;
-  const actions = card.querySelector(".actions");
-  const inspectButton = document.createElement("button");
-  inspectButton.className = "btn";
-  inspectButton.textContent = state.webhookEndpointFilter === summary.callback_url ? "Inspecting" : "Inspect events";
-  inspectButton.onclick = async () => {
-    setWebhookEndpointFilter(summary.callback_url);
-    await refreshWebhookAttentionEvents().catch(() => null);
-  };
-  actions.appendChild(inspectButton);
-
-  const muteButton = document.createElement("button");
-  muteButton.className = "btn";
-  const isMuted = Boolean(summary.muted_until);
-  muteButton.textContent = isMuted ? "Resume endpoint" : "Mute endpoint";
-  muteButton.onclick = async () => {
-    try {
-      if (isMuted) {
-        setStatus("Resuming webhook endpoint...");
-        await api("/v1/webhook-endpoints/unmute", {
-          method: "POST",
-          body: JSON.stringify({ callback_url: summary.callback_url }),
-        });
-      } else {
-        setStatus("Muting webhook endpoint...");
-        await api("/v1/webhook-endpoints/mute", {
-          method: "POST",
-          body: JSON.stringify({ callback_url: summary.callback_url }),
-        });
-      }
-      await refreshWebhookOps();
-      setStatus("Ready");
-    } catch (error) {
-      log("Webhook endpoint control failed", { callback_url: summary.callback_url, error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-  actions.appendChild(muteButton);
-  return card;
-}
-
-async function refreshWebhookEndpointSummaries() {
-  const summaries = await api("/v1/webhook-endpoints/summary?limit=20");
+  const endpoints = await api("/v1/webhook-endpoints/summary?limit=20");
   const container = $("webhook-endpoint-list");
   container.innerHTML = "";
-  if (!summaries.length) {
+  if (!endpoints.length) {
     const empty = document.createElement("div");
     empty.className = "request-card";
-    empty.innerHTML = '<div class="request-meta">No callback endpoints recorded yet.</div>';
+    empty.textContent = "No callback endpoints recorded yet.";
     container.appendChild(empty);
     return;
   }
-  summaries.forEach((summary) => container.appendChild(renderWebhookEndpointCard(summary)));
+  endpoints.forEach((endpoint) => container.appendChild(renderWebhookEndpoint(endpoint)));
 }
 
-function renderWebhookPruneHistoryCard(entry) {
-  const card = document.createElement("div");
-  card.className = "request-card";
-  card.innerHTML = `
-    <strong>Prune run at ${entry.created_at}</strong>
-    <div class="request-meta">actor=${entry.actor || "system"} · total-deleted=${entry.total_deleted}</div>
-    <div class="request-meta">delivered-or-skipped=${entry.deleted_delivered_or_skipped} · retry-history=${entry.deleted_retry_history_events}</div>
-    <div class="request-meta">cutoffs=${entry.delivered_or_skipped_cutoff || "n/a"} / ${entry.retry_history_cutoff || "n/a"}</div>
-  `;
-  return card;
+async function logout() {
+  await api("/v1/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  window.location.replace("/login");
 }
 
-async function refreshWebhookPruneHistory() {
-  const history = await api("/v1/webhook-prune-history?limit=10");
-  const container = $("webhook-prune-history");
-  container.innerHTML = "";
-  if (!history.length) {
-    const empty = document.createElement("div");
-    empty.className = "request-card";
-    empty.innerHTML = '<div class="request-meta">No prune history recorded yet.</div>';
-    container.appendChild(empty);
-    return;
-  }
-  history.forEach((entry) => container.appendChild(renderWebhookPruneHistoryCard(entry)));
-}
+async function main() {
+  updateDeviceHint($("device-hint"));
+  await loadSession();
+  await Promise.all([refreshProducers(), refreshApprovers(), refreshWebhookOps()]);
 
-async function refreshWebhookAttentionEvents() {
-  const [queuedEvents, failedEvents] = await Promise.all([
-    api(buildWebhookEventsPath("queued")),
-    api(buildWebhookEventsPath("failed")),
-  ]);
-  const events = [...failedEvents, ...queuedEvents];
-  const { chainStatsByRoot, rootByEventId } = buildWebhookChainStats(events);
-  const filtered = events
-    .filter((event) => {
-      if (state.webhookFilter === "failed") return event.status === "failed";
-      if (state.webhookFilter === "stalled") return isStalledWebhookEvent(event);
-      return event.status === "failed" || isStalledWebhookEvent(event);
-    })
-    .sort((left, right) => {
-      const leftPriority = isDeadLetteredWebhookEvent(left) ? 0 : left.status === "failed" ? 1 : 2;
-      const rightPriority = isDeadLetteredWebhookEvent(right) ? 0 : right.status === "failed" ? 1 : 2;
-      if (leftPriority !== rightPriority) {
-        return leftPriority - rightPriority;
-      }
-      return (right.updated_at || "").localeCompare(left.updated_at || "");
-    });
-  const container = $("webhook-event-list");
-  container.innerHTML = "";
-  if (!filtered.length) {
-    const empty = document.createElement("div");
-    empty.className = "request-card";
-    empty.innerHTML = '<div class="request-meta">No webhook events match this filter.</div>';
-    container.appendChild(empty);
-    return;
-  }
-  filtered.forEach((event) => {
-    const rootId = rootByEventId.get(event.id) || event.id;
-    container.appendChild(renderWebhookEventCard(event, chainStatsByRoot.get(rootId) || {
-      eventCount: 1,
-      failedCount: event.status === "failed" ? 1 : 0,
-      deadLetteredCount: event.dead_lettered_at ? 1 : 0,
-      maxRetryAttempt: event.retry_attempt || 0,
-      latestAvailableAt: event.available_at || null,
-    }));
-  });
-}
-
-async function refreshWebhookOps() {
-  await Promise.all([
-    refreshWebhookSummary(),
-    refreshWebhookEndpointSummaries(),
-    refreshWebhookAttentionEvents(),
-    refreshWebhookPruneHistory(),
-  ]);
-}
-
-async function createRequest() {
-  const req = await api("/v1/approval-requests", {
-    method: "POST",
-    body: JSON.stringify({
-      action_type: $("action-type").value.trim(),
-      action_hash: $("action-hash").value.trim(),
-      risk_level: $("risk-level").value,
-      requester_id: state.approverId || "demo-requester",
-      callback_url: $("callback-url").value.trim() || undefined,
-      metadata: { source: "clawpass-web-demo" },
-    }),
-  });
-  log("Approval request created.", req);
-  await refreshRequests();
-  await refreshWebhookOps();
-}
-
-async function startAndComplete(requestId, decision, method) {
-  if (!state.approverId) {
-    throw new Error("Create or load an approver first.");
-  }
-  const start = await api(`/v1/approval-requests/${requestId}/decision/start`, {
-    method: "POST",
-    body: JSON.stringify({ approver_id: state.approverId, decision, method }),
-  });
-
-  if (method === "webauthn" || method === "ledger_webauthn") {
-    const publicKey = normalizeRequestOptions(start.payload.public_key_options);
-    const assertion = await navigator.credentials.get({ publicKey });
-    const done = await api(`/v1/approval-requests/${requestId}/decision/complete`, {
-      method: "POST",
-      body: JSON.stringify({ challenge_id: start.challenge_id, proof: { credential: assertionCredentialToJSON(assertion) } }),
-    });
-    log(`Decision completed via ${method}.`, done);
-  } else {
-    if (!window.ethereum) throw new Error("Ethereum wallet not available.");
-    const [address] = await window.ethereum.request({ method: "eth_requestAccounts" });
-    const signature = await window.ethereum.request({
-      method: "eth_signTypedData_v4",
-      params: [address, JSON.stringify(start.payload.typed_data)],
-    });
-    const done = await api(`/v1/approval-requests/${requestId}/decision/complete`, {
-      method: "POST",
-      body: JSON.stringify({ challenge_id: start.challenge_id, proof: { signature } }),
-    });
-    log("Decision completed via ethereum_signer.", done);
-  }
-  await refreshRequests();
-  await refreshWebhookOps();
-}
-
-function renderRequestCard(request) {
-  const card = document.createElement("div");
-  card.className = "request-card";
-  card.innerHTML = `
-    <strong>${request.id}</strong>
-    <div class="request-meta">${request.action_type} · ${request.risk_level} · status=${request.status}</div>
-    <div class="request-meta">hash=${request.action_hash}</div>
-    <div class="actions"></div>
-  `;
-
-  const actions = card.querySelector(".actions");
-  if (request.status === "PENDING") {
-    [
-      ["Approve (Passkey)", "APPROVE", "webauthn"],
-      ["Deny (Passkey)", "DENY", "webauthn"],
-      ["Approve (Ledger key)", "APPROVE", "ledger_webauthn"],
-      ["Approve (Ledger signer)", "APPROVE", "ethereum_signer"],
-    ].forEach(([label, decision, method]) => {
-      const btn = document.createElement("button");
-      btn.className = "btn";
-      btn.textContent = label;
-      btn.onclick = async () => {
-        try {
-          setStatus(`Working: ${label}`);
-          await startAndComplete(request.id, decision, method);
-          setStatus("Ready");
-        } catch (error) {
-          setStatus("Error");
-          log(`Decision failed for ${request.id}`, { method, error: String(error) });
-          alert(String(error));
-        }
-      };
-      actions.appendChild(btn);
-    });
-  }
-  return card;
-}
-
-async function refreshRequests() {
-  const requests = await api("/v1/approval-requests");
-  const container = $("requests");
-  container.innerHTML = "";
-  requests.forEach((request) => container.appendChild(renderRequestCard(request)));
-}
-
-function bindButtons() {
-  $("btn-passkey").onclick = async () => {
-    try {
-      await createPasskey({ isLedger: false, useAnotherDevice: false });
-    } catch (error) {
-      log("Passkey enrollment failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-passkey-cross").onclick = async () => {
-    try {
-      await createPasskey({ isLedger: false, useAnotherDevice: true });
-    } catch (error) {
-      log("Cross-device passkey failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-ledger-webauthn").onclick = async () => {
-    try {
-      await createPasskey({ isLedger: true, useAnotherDevice: false });
-    } catch (error) {
-      log("Ledger WebAuthn enrollment failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-ledger-eth").onclick = async () => {
-    try {
-      setStatus("Registering Ethereum signer...");
-      await addEthereumSigner();
-      setStatus("Ethereum signer ready");
-    } catch (error) {
-      log("Ethereum signer enrollment failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-recovery").onclick = () => {
-    log("Recovery path confirmed by operator.");
-    setStatus("Recovery confirmed");
-    alert("Recovery path confirmed. Keep at least one backup passkey device.");
-  };
-
-  $("btn-create-request").onclick = async () => {
-    try {
-      setStatus("Creating request...");
-      await createRequest();
-      setStatus("Ready");
-    } catch (error) {
-      log("Create request failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-refresh").onclick = async () => {
-    try {
-      await Promise.all([refreshRequests(), refreshWebhookOps()]);
-      setStatus("Ready");
-    } catch (error) {
-      log("Refresh failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-settings-passkey").onclick = async () => {
-    try {
-      await createPasskey({ isLedger: false, useAnotherDevice: false });
-    } catch (error) {
-      log("Settings passkey action failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-load-summary").onclick = async () => {
-    try {
-      await refreshSummary();
-      setStatus("Ready");
-    } catch (error) {
-      log("Summary load failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
-  $("btn-refresh-webhooks").onclick = async () => {
-    try {
-      await refreshWebhookOps();
-      setStatus("Ready");
-    } catch (error) {
-      log("Webhook summary load failed", { error: String(error) });
-      alert(String(error));
-      setStatus("Error");
-    }
-  };
-
+  $("btn-passkey").onclick = () => createPasskey({ isLedger: false }).catch((error) => alert(String(error)));
+  $("btn-passkey-cross").onclick = () => createPasskey({ isLedger: false, useAnotherDevice: true }).catch((error) => alert(String(error)));
+  $("btn-ledger-webauthn").onclick = () => createPasskey({ isLedger: true }).catch((error) => alert(String(error)));
+  $("btn-ledger-eth").onclick = () => addEthereumSigner().catch((error) => alert(String(error)));
+  $("btn-create-invite").onclick = () => createInvite().catch((error) => alert(String(error)));
+  $("btn-refresh-approvers").onclick = () => refreshApprovers().catch((error) => alert(String(error)));
+  $("btn-create-producer").onclick = () => createProducer().catch((error) => alert(String(error)));
+  $("btn-refresh-producers").onclick = () => refreshProducers().catch((error) => alert(String(error)));
+  $("btn-refresh-webhooks").onclick = () => refreshWebhookOps().catch((error) => alert(String(error)));
   $("btn-prune-webhooks").onclick = async () => {
     try {
-      setStatus("Pruning webhook history...");
       const result = await api("/v1/webhook-events/prune", { method: "POST", body: JSON.stringify({}) });
-      log("Webhook history pruned.", result);
+      log("Pruned webhook history.", result);
       await refreshWebhookOps();
-      setStatus("Ready");
     } catch (error) {
-      log("Webhook history prune failed", { error: String(error) });
       alert(String(error));
-      setStatus("Error");
     }
   };
-
-  $("btn-clear-webhook-endpoint-filter").onclick = async () => {
-    setWebhookEndpointFilter(null);
-    await refreshWebhookAttentionEvents().catch(() => null);
-  };
-
-  $("btn-webhook-filter-attention").onclick = async () => {
-    setWebhookFilter("attention");
-    await refreshWebhookAttentionEvents().catch(() => null);
-  };
-
-  $("btn-webhook-filter-failed").onclick = async () => {
-    setWebhookFilter("failed");
-    await refreshWebhookAttentionEvents().catch(() => null);
-  };
-
-  $("btn-webhook-filter-stalled").onclick = async () => {
-    setWebhookFilter("stalled");
-    await refreshWebhookAttentionEvents().catch(() => null);
-  };
+  $("btn-logout").onclick = () => logout().catch((error) => alert(String(error)));
 }
 
-async function init() {
-  updateDeviceHint();
-  bindButtons();
-  setWebhookFilter("attention");
-  setWebhookEndpointFilter(null);
-  await Promise.all([refreshRequests(), refreshWebhookOps()]).catch(() => null);
-  setStatus("Ready");
-}
-
-window.addEventListener("resize", updateDeviceHint);
-init();
+main().catch((error) => {
+  setStatus("Error");
+  log("Operator app failed to load.", { error: String(error) });
+});

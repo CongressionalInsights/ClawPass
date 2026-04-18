@@ -21,7 +21,14 @@ class _FakeHttpClient:
     def post(self, path, json):
         self.calls.append(("post", path, json))
         if path == "/v1/approval-requests":
-            return _DummyResponse({"id": json["request_id"], "status": "PENDING"})
+            return _DummyResponse(
+                {
+                    "id": json["request_id"],
+                    "status": "PENDING",
+                    "producer_id": "producer-123",
+                    "approval_url": f"http://localhost:8081/approve/{json['request_id']}",
+                }
+            )
         if path == "/v1/webhook-endpoints/mute":
             return _DummyResponse(
                 {
@@ -133,6 +140,64 @@ class _FakeHttpClient:
         return None
 
 
+def test_python_sdk_sets_bearer_auth_header_for_producer_calls(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class CapturingClient:
+        def __init__(self, *, base_url, timeout, headers=None):
+            captured["base_url"] = base_url
+            captured["timeout"] = timeout
+            captured["headers"] = headers
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("clawpass_sdk_py.client.httpx.Client", CapturingClient)
+
+    client = ClawPassClient("http://localhost:8081", api_key="cpk_test.secret", timeout=5.0)
+    try:
+        assert captured == {
+            "base_url": "http://localhost:8081",
+            "timeout": 5.0,
+            "headers": {"Authorization": "Bearer cpk_test.secret"},
+        }
+    finally:
+        client.close()
+
+
+def test_python_sdk_merges_custom_headers_with_bearer_auth(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class CapturingClient:
+        def __init__(self, *, base_url, timeout, headers=None):
+            captured["base_url"] = base_url
+            captured["timeout"] = timeout
+            captured["headers"] = headers
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("clawpass_sdk_py.client.httpx.Client", CapturingClient)
+
+    client = ClawPassClient(
+        "http://localhost:8081",
+        api_key="cpk_test.secret",
+        headers={"Cookie": "clawpass_session=session-token", "X-ClawPass-CSRF": "csrf-token"},
+    )
+    try:
+        assert captured == {
+            "base_url": "http://localhost:8081",
+            "timeout": 10.0,
+            "headers": {
+                "Authorization": "Bearer cpk_test.secret",
+                "Cookie": "clawpass_session=session-token",
+                "X-ClawPass-CSRF": "csrf-token",
+            },
+        }
+    finally:
+        client.close()
+
+
 def test_python_sdk_create_approval_request_forwards_request_id():
     client = ClawPassClient("http://localhost:8081")
     fake_client = _FakeHttpClient()
@@ -151,6 +216,8 @@ def test_python_sdk_create_approval_request_forwards_request_id():
     assert fake_client.calls[0][1] == "/v1/approval-requests"
     assert fake_client.calls[0][2]["request_id"] == "req-fixed-id"
     assert response["id"] == "req-fixed-id"
+    assert response["producer_id"] == "producer-123"
+    assert response["approval_url"] == "http://localhost:8081/approve/req-fixed-id"
 
 
 def test_python_sdk_list_approval_requests_forwards_status_filter():
@@ -350,3 +417,42 @@ def test_python_sdk_mute_unmute_and_prune_history_use_endpoint_ops():
     assert muted["muted_until"] == "2026-04-17T00:10:00Z"
     assert unmuted["muted_until"] is None
     assert history[0]["total_deleted"] == 3
+
+
+def test_python_sdk_wait_for_final_decision_polls_until_terminal():
+    client = ClawPassClient("http://localhost:8081")
+    responses = iter(
+        [
+            {"id": "req-terminal", "status": "PENDING"},
+            {"id": "req-terminal", "status": "APPROVED", "producer_id": "producer-123", "action_hash": "sha256:approved"},
+        ]
+    )
+    client.get_approval_request = lambda request_id: next(responses)  # type: ignore[method-assign]
+    try:
+        response = client.wait_for_final_decision("req-terminal", timeout_seconds=1, poll_interval_seconds=0)
+    finally:
+        client.close()
+
+    assert response["status"] == "APPROVED"
+    assert response["id"] == "req-terminal"
+
+
+def test_python_sdk_verify_approved_request_checks_expected_bindings():
+    client = ClawPassClient("http://localhost:8081")
+    approved = {
+        "id": "req-approved",
+        "status": "APPROVED",
+        "producer_id": "producer-123",
+        "action_hash": "sha256:approved",
+    }
+    try:
+        verified = client.verify_approved_request(
+            approved,
+            request_id="req-approved",
+            action_hash="sha256:approved",
+            producer_id="producer-123",
+        )
+    finally:
+        client.close()
+
+    assert verified is approved

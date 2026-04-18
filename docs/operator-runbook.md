@@ -7,6 +7,11 @@ This runbook is for humans operating a ClawPass instance.
 ### Docker
 
 ```bash
+export CLAWPASS_BASE_URL=https://clawpass.example.com
+export CLAWPASS_EXPECTED_ORIGIN=https://clawpass.example.com
+export CLAWPASS_RP_ID=clawpass.example.com
+export CLAWPASS_BOOTSTRAP_TOKEN=replace-with-a-long-random-bootstrap-token
+export CLAWPASS_SESSION_SECRET=replace-with-a-long-random-session-secret
 docker compose up --build
 ```
 
@@ -14,19 +19,35 @@ docker compose up --build
 
 ```bash
 source .venv/bin/activate
+export CLAWPASS_BASE_URL=http://localhost:8081
+export CLAWPASS_BOOTSTRAP_TOKEN=dev-bootstrap-token
+export CLAWPASS_SESSION_SECRET=dev-session-secret
 clawpass-server
 ```
+
+## First-run bootstrap
+
+On a new instance:
+1. Open `/setup`.
+2. Enter `CLAWPASS_BOOTSTRAP_TOKEN`.
+3. Enroll the first admin passkey.
+4. Confirm you land in `/app`.
+5. Create the first producer and issue its API key.
+6. Create approver invites for any additional human approvers.
+
+On later visits:
+- `/login` performs passkey-based human login.
+- `/app` is the authenticated operator surface.
+- non-admin approvers should usually enter through an invite URL or an `approval_url`
 
 ## Primary health checks
 
 Check these first:
 - `GET /healthz`
 - `GET /docs`
-- `GET /v1/approval-requests`
-- `GET /v1/webhook-summary`
-- `GET /v1/webhook-endpoints/summary`
+- `GET /v1/setup/status`
 
-If the built-in UI is available, also open `/` and confirm the Webhook Ops panel renders current state.
+If the built-in UI is available, also open `/` and confirm it routes to `/setup`, `/login`, or `/app` as expected.
 
 ## Routine checks
 
@@ -36,6 +57,7 @@ Review:
 - pending request volume
 - expired request count
 - unexpected cancellations or denials
+- producer identities creating requests
 - approver summary counts for the passkey floor on high-risk approvers
 
 ### Webhook checks
@@ -51,13 +73,14 @@ Review:
 ## Using the built-in operator dashboard
 
 The current dashboard supports:
+- session summary with admin status
+- passkey and Ledger enrollment actions
+- approver list and invite creation
+- producer creation and API-key issuance
 - health summary and alert list
-- attention, failed, and stalled filters
 - endpoint cards with mute state and failure counts
-- endpoint-scoped event inspection
-- mute/resume endpoint actions
-- redelivery and retry-now actions
-- prune history visibility
+- mute and resume endpoint actions
+- prune action and backlog visibility
 
 Use the dashboard for triage, but use the API when you need scripted or repeatable operator workflows.
 
@@ -77,7 +100,12 @@ Use this when a destination is repeatedly failing and continuing to deliver woul
 API:
 
 ```bash
+export CLAWPASS_SESSION=...
+export CLAWPASS_CSRF=...
+
 curl -X POST http://localhost:8081/v1/webhook-endpoints/mute \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  -H "X-ClawPass-CSRF: ${CLAWPASS_CSRF}" \
   -H 'Content-Type: application/json' \
   -d '{"callback_url":"https://example.com/webhooks/clawpass","reason":"operator pause"}'
 ```
@@ -90,6 +118,8 @@ API:
 
 ```bash
 curl -X POST http://localhost:8081/v1/webhook-endpoints/unmute \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  -H "X-ClawPass-CSRF: ${CLAWPASS_CSRF}" \
   -H 'Content-Type: application/json' \
   -d '{"callback_url":"https://example.com/webhooks/clawpass"}'
 ```
@@ -99,7 +129,9 @@ curl -X POST http://localhost:8081/v1/webhook-endpoints/unmute \
 Use redelivery when a failed event should be replayed after the destination is healthy.
 
 ```bash
-curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/redeliver
+curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/redeliver \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  -H "X-ClawPass-CSRF: ${CLAWPASS_CSRF}"
 ```
 
 ### Force a queued stalled event to retry now
@@ -107,7 +139,9 @@ curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/redeliver
 Use this only for queued events that are due and not actively leased.
 
 ```bash
-curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/retry-now
+curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/retry-now \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  -H "X-ClawPass-CSRF: ${CLAWPASS_CSRF}"
 ```
 
 ### Prune old settled history
@@ -115,13 +149,17 @@ curl -X POST http://localhost:8081/v1/webhook-events/<event_id>/retry-now
 Use prune to remove old delivered, skipped, or settled retry-chain history.
 
 ```bash
-curl -X POST http://localhost:8081/v1/webhook-events/prune
+curl -X POST http://localhost:8081/v1/webhook-events/prune \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  -H "X-ClawPass-CSRF: ${CLAWPASS_CSRF}"
 ```
 
 Then confirm the recorded result:
 
 ```bash
-curl http://localhost:8081/v1/webhook-prune-history
+curl \
+  -H "Cookie: clawpass_session=${CLAWPASS_SESSION}" \
+  http://localhost:8081/v1/webhook-prune-history
 ```
 
 ## Incident response
@@ -131,7 +169,7 @@ curl http://localhost:8081/v1/webhook-prune-history
 1. Pause producer-side sensitive execution if necessary.
 2. Identify affected request ids.
 3. Verify the audit trail and request state.
-4. Confirm whether the issue is verification, enrollment, expiration, or producer-side mismatch.
+4. Confirm whether the issue is verification, enrollment, expiration, auth, or producer-side mismatch.
 
 ### Webhook incident
 
@@ -154,7 +192,9 @@ For the compose setup, that means preserving the mounted data volume backing `/d
 
 Backups matter for:
 - approval request history
+- producer registry and API-key metadata
 - approver enrollment state
+- admin sessions and bootstrap state
 - webhook delivery history
 - audit events
 
@@ -165,8 +205,8 @@ Backups matter for:
 3. Validate:
    - `/healthz`
    - `/docs`
-   - `/v1/approval-requests`
-   - `/v1/webhook-summary`
+   - `/v1/setup/status`
+   - `/login`
 4. Run one canary approval end to end.
 5. If the release changed routes or schemas, confirm `docs/openapi.json` was updated in the release PR.
 

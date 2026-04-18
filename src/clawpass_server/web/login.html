@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClawPass Login</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <header class="topbar">
+      <div>
+        <h1>ClawPass</h1>
+        <p class="subtitle">Admin sign-in</p>
+      </div>
+      <div class="status" id="global-status">Ready</div>
+    </header>
+    <main class="layout">
+      <section class="panel">
+        <h2>Sign in with passkey</h2>
+        <div class="grid">
+          <label>
+            Approver email
+            <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
+          </label>
+        </div>
+        <p class="note" id="device-hint"></p>
+        <p class="note">Use the email tied to your ClawPass approver identity or invite.</p>
+        <div class="actions">
+          <button id="btn-login" class="btn btn-primary">Sign in</button>
+        </div>
+      </section>
+      <section class="log-panel">
+        <h3>Activity</h3>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/assets/login.js"></script>
+  </body>
+</html>

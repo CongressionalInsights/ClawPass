@@ -15,6 +15,78 @@ CREATE TABLE IF NOT EXISTS approvers (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS admins (
+  id TEXT PRIMARY KEY,
+  approver_id TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bootstrap_sessions (
+  id TEXT PRIMARY KEY,
+  approver_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  display_name TEXT,
+  challenge TEXT NOT NULL,
+  options_json TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_login_sessions (
+  id TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  options_json TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approver_login_sessions (
+  id TEXT PRIMARY KEY,
+  approver_id TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  options_json TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL,
+  csrf_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS approver_sessions (
+  id TEXT PRIMARY KEY,
+  approver_id TEXT NOT NULL,
+  csrf_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS producers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS producer_api_keys (
+  id TEXT PRIMARY KEY,
+  producer_id TEXT NOT NULL,
+  public_key_id TEXT NOT NULL UNIQUE,
+  secret_hash TEXT NOT NULL,
+  label TEXT,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY,
   approver_id TEXT NOT NULL,
@@ -40,6 +112,7 @@ CREATE TABLE IF NOT EXISTS ethereum_signers (
 
 CREATE TABLE IF NOT EXISTS approval_requests (
   id TEXT PRIMARY KEY,
+  producer_id TEXT,
   action_type TEXT NOT NULL,
   action_ref TEXT,
   action_hash TEXT NOT NULL,
@@ -78,6 +151,17 @@ CREATE TABLE IF NOT EXISTS webauthn_registration_sessions (
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   is_ledger INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS approver_invites (
+  token TEXT PRIMARY KEY,
+  approver_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  display_name TEXT,
+  next_path TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ethereum_signer_sessions (
@@ -150,9 +234,65 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
+            self._ensure_approval_request_columns(connection)
+            self._ensure_bootstrap_session_columns(connection)
+            self._ensure_human_auth_tables(connection)
             self._ensure_webhook_event_columns(connection)
             self._ensure_webhook_endpoint_control_columns(connection)
             connection.commit()
+
+    def _ensure_approval_request_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(approval_requests)").fetchall()}
+        if "producer_id" not in columns:
+            connection.execute("ALTER TABLE approval_requests ADD COLUMN producer_id TEXT")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_requests_producer_created ON approval_requests(producer_id, created_at)"
+        )
+
+    def _ensure_bootstrap_session_columns(self, connection: sqlite3.Connection) -> None:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(bootstrap_sessions)").fetchall()}
+        if columns and "approver_id" not in columns:
+            connection.execute("ALTER TABLE bootstrap_sessions ADD COLUMN approver_id TEXT")
+
+    def _ensure_human_auth_tables(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approver_login_sessions (
+              id TEXT PRIMARY KEY,
+              approver_id TEXT NOT NULL,
+              challenge TEXT NOT NULL,
+              options_json TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approver_sessions (
+              id TEXT PRIMARY KEY,
+              approver_id TEXT NOT NULL,
+              csrf_token TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              last_seen_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approver_invites (
+              token TEXT PRIMARY KEY,
+              approver_id TEXT NOT NULL,
+              email TEXT NOT NULL,
+              display_name TEXT,
+              next_path TEXT,
+              expires_at TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              consumed_at TEXT
+            )
+            """
+        )
 
     def _ensure_webhook_event_columns(self, connection: sqlite3.Connection) -> None:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(webhook_events)").fetchall()}

@@ -60,14 +60,125 @@ async function stopServer(server: ReturnType<typeof spawn>): Promise<void> {
   }
 }
 
+async function runPython(
+  repoRoot: string,
+  env: Record<string, string>,
+  code: string,
+): Promise<string> {
+  const pythonPath = join(repoRoot, ".venv", "bin", "python");
+  const pythonPathEnv = process.env.PYTHONPATH
+    ? `${join(repoRoot, "src")}:${process.env.PYTHONPATH}`
+    : join(repoRoot, "src");
+  return await new Promise((resolveOutput, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const processHandle = spawn(pythonPath, ["-c", code], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        ...env,
+        PYTHONPATH: pythonPathEnv,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    processHandle.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    processHandle.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    processHandle.once("exit", (code) => {
+      if (code === 0) {
+        resolveOutput(stdout.trim());
+        return;
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `python exited with code ${code}`));
+    });
+  });
+}
+
+async function issueProducerApiKey(repoRoot: string, dbPath: string, baseUrl: string): Promise<string> {
+  const script = `
+from pathlib import Path
+import os
+
+from clawpass_server.adapters.ethereum_adapter import EthereumAdapter
+from clawpass_server.adapters.webauthn_adapter import WebAuthnAdapter
+from clawpass_server.core.config import Settings
+from clawpass_server.core.database import Database
+from clawpass_server.core.service import ClawPassService
+
+settings = Settings(
+    db_path=Path(os.environ["CLAWPASS_DB_PATH"]),
+    host="127.0.0.1",
+    port=8081,
+    base_url=os.environ["CLAWPASS_BASE_URL"],
+    rp_id="localhost",
+    rp_name="ClawPass",
+    expected_origin=os.environ["CLAWPASS_BASE_URL"],
+    expected_origins=[os.environ["CLAWPASS_BASE_URL"]],
+    webauthn_timeout_ms=60000,
+    challenge_ttl_minutes=10,
+    approval_default_ttl_minutes=30,
+    admin_session_ttl_minutes=720,
+    instance_id="ts-sdk-roundtrip",
+    session_secret="ts-sdk-roundtrip-session",
+    session_secret_configured=True,
+    bootstrap_token="ts-sdk-roundtrip-bootstrap",
+    deployment_mode="development",
+    webhook_timeout_seconds=0.1,
+    webhook_delivery_lease_seconds=30,
+    webhook_retry_poll_seconds=0,
+    webhook_auto_retry_limit=2,
+    webhook_auto_retry_base_delay_seconds=30,
+    webhook_auto_retry_max_delay_seconds=300,
+    webhook_auto_retry_jitter_seconds=10,
+    webhook_backlog_alert_threshold=1,
+    webhook_backlog_alert_after_seconds=30,
+    webhook_failure_rate_alert_threshold=0.25,
+    webhook_event_retention_days=14,
+    webhook_retry_history_retention_days=30,
+    webhook_endpoint_auto_mute_threshold=3,
+    webhook_endpoint_auto_mute_seconds=600,
+    webhook_secret=None,
+)
+db = Database(settings.db_path)
+db.ensure_ready()
+service = ClawPassService(
+    settings=settings,
+    db=db,
+    webauthn=WebAuthnAdapter(settings),
+    ethereum=EthereumAdapter(),
+)
+producer = service.create_producer(
+    payload=type("ProducerPayload", (), {"name": "ts-sdk-roundtrip", "description": "ts sdk roundtrip"})()
+)
+key = service.issue_producer_key(
+    producer.id,
+    payload=type("ProducerKeyPayload", (), {"label": "primary"})(),
+)
+print(key.api_key)
+`;
+  return await runPython(
+    repoRoot,
+    {
+      CLAWPASS_DB_PATH: dbPath,
+      CLAWPASS_BASE_URL: baseUrl,
+    },
+    script,
+  );
+}
+
 async function main(): Promise<void> {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(scriptDir, "..");
   const tmpRoot = await mkdtemp(join(tmpdir(), "clawpass-ts-"));
+  const dbPath = join(tmpRoot, "clawpass-ts.db");
   const port = await reservePort();
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = `http://localhost:${port}`;
   const pythonPath = join(repoRoot, ".venv", "bin", "python");
   const pythonPathEnv = process.env.PYTHONPATH ? `${join(repoRoot, "src")}:${process.env.PYTHONPATH}` : join(repoRoot, "src");
+  const apiKey = await issueProducerApiKey(repoRoot, dbPath, baseUrl);
   let stdout = "";
   let stderr = "";
 
@@ -76,11 +187,14 @@ async function main(): Promise<void> {
     env: {
       ...process.env,
       PYTHONPATH: pythonPathEnv,
-      CLAWPASS_DB_PATH: join(tmpRoot, "clawpass-ts.db"),
+      CLAWPASS_DB_PATH: dbPath,
       CLAWPASS_HOST: "127.0.0.1",
       CLAWPASS_PORT: String(port),
+      CLAWPASS_BASE_URL: baseUrl,
       CLAWPASS_EXPECTED_ORIGIN: baseUrl,
       CLAWPASS_EXPECTED_ORIGINS: baseUrl,
+      CLAWPASS_SESSION_SECRET: "ts-sdk-roundtrip-session",
+      CLAWPASS_BOOTSTRAP_TOKEN: "ts-sdk-roundtrip-bootstrap",
       CLAWPASS_WEBHOOK_TIMEOUT_SECONDS: "0.1",
       CLAWPASS_WEBHOOK_RETRY_POLL_SECONDS: "0",
     },
@@ -97,15 +211,20 @@ async function main(): Promise<void> {
   try {
     await waitForHealthy(baseUrl, server);
 
-    const client = new ClawPassClient({ baseUrl });
-    const created = await client.createApprovalRequest({
+    const client = new ClawPassClient({ baseUrl, apiKey });
+    const created = await client.createGatedAction({
       request_id: "ts-sdk-roundtrip",
       action_type: "sdk.roundtrip",
       action_hash: "sha256:ts-sdk-roundtrip",
       risk_level: "low",
       requester_id: "ts-sdk-benchmark",
     });
-    if (created.id !== "ts-sdk-roundtrip" || created.status !== "PENDING") {
+    if (
+      created.id !== "ts-sdk-roundtrip" ||
+      created.status !== "PENDING" ||
+      !created.producer_id ||
+      !created.approval_url
+    ) {
       throw new Error(`unexpected create response: ${JSON.stringify(created)}`);
     }
 
@@ -119,26 +238,12 @@ async function main(): Promise<void> {
       throw new Error(`unexpected cancel response: ${JSON.stringify(cancelled)}`);
     }
 
-    const events = await client.listWebhookEvents({
-      requestId: created.id,
-      status: "skipped",
-      eventType: "approval.cancelled",
-      limit: 10,
+    const terminal = await client.waitForFinalDecision(created.id, {
+      timeoutMs: 1_000,
+      pollIntervalMs: 10,
     });
-    if (!events.length || events[0].event_type !== "approval.cancelled") {
-      throw new Error(`unexpected webhook events: ${JSON.stringify(events)}`);
-    }
-
-    const summary = await client.getWebhookSummary();
-    if (
-      summary.backlog_count !== 0 ||
-      summary.stalled_backlog_count !== 0 ||
-      summary.scheduled_retry_count !== 0 ||
-      summary.redelivery_count !== 0 ||
-      summary.health_state !== "healthy" ||
-      summary.alerts.length !== 0
-    ) {
-      throw new Error(`unexpected webhook summary: ${JSON.stringify(summary)}`);
+    if (terminal.id !== created.id || terminal.status !== "CANCELLED") {
+      throw new Error(`unexpected terminal response: ${JSON.stringify(terminal)}`);
     }
 
     const fetched = await client.getApprovalRequest(created.id);

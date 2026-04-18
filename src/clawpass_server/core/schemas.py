@@ -11,6 +11,28 @@ class ApproverIdentityIn(BaseModel):
     display_name: str | None = None
 
 
+class BootstrapStatusResponse(BaseModel):
+    initialized: bool
+    bootstrap_configured: bool
+
+
+class BootstrapStartRequest(BaseModel):
+    bootstrap_token: str
+    email: str
+    display_name: str | None = None
+
+
+class BootstrapStartResponse(BaseModel):
+    session_id: str
+    public_key_options: dict[str, Any]
+
+
+class BootstrapCompleteRequest(BaseModel):
+    session_id: str
+    credential: dict[str, Any]
+    label: str | None = None
+
+
 class WebAuthnRegisterStartRequest(ApproverIdentityIn):
     label: str | None = None
     is_ledger: bool = False
@@ -48,6 +70,7 @@ class CreateApprovalRequest(BaseModel):
 
 class ApprovalRequestResponse(BaseModel):
     id: str
+    producer_id: str | None
     action_type: str
     action_ref: str | None
     action_hash: str
@@ -63,10 +86,11 @@ class ApprovalRequestResponse(BaseModel):
     expires_at: str
     decided_at: str | None
     callback_url: str | None
+    approval_url: str | None
 
 
 class DecisionStartRequest(BaseModel):
-    approver_id: str
+    approver_id: str | None = None
     decision: Literal["APPROVE", "DENY"]
     method: Literal["webauthn", "ledger_webauthn", "ethereum_signer"]
 
@@ -85,6 +109,18 @@ class DecisionCompleteRequest(BaseModel):
 
 class DecisionCompleteResponse(BaseModel):
     request: ApprovalRequestResponse
+
+
+class ApprovalLinkResponse(BaseModel):
+    id: str
+    producer_id: str | None
+    action_type: str
+    action_ref: str | None
+    risk_level: str
+    status: str
+    created_at: str
+    expires_at: str
+    approval_url: str
 
 
 class EthereumSignerChallengeRequest(ApproverIdentityIn):
@@ -112,6 +148,83 @@ class EthereumSignerVerifyResponse(BaseModel):
 
 class CancelApprovalRequest(BaseModel):
     reason: str | None = None
+
+
+class LoginStartRequest(BaseModel):
+    email: str
+
+
+class AdminLoginStartResponse(BaseModel):
+    session_id: str
+    public_key_options: dict[str, Any]
+
+
+class AdminLoginCompleteRequest(BaseModel):
+    session_id: str
+    credential: dict[str, Any]
+
+
+class AdminSessionResponse(BaseModel):
+    admin_id: str | None
+    approver_id: str
+    email: str
+    display_name: str | None
+    passkey_count: int
+    ledger_webauthn_count: int
+    ethereum_signer_count: int
+    is_admin: bool
+
+
+class ApproverInviteCreateRequest(BaseModel):
+    email: str
+    display_name: str | None = None
+    expires_in_minutes: int | None = None
+    next_path: str | None = None
+
+
+class ApproverInviteResponse(BaseModel):
+    token: str
+    approver_id: str
+    email: str
+    display_name: str | None
+    invite_url: str
+    expires_at: str
+    consumed_at: str | None
+
+
+class ApproverResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str | None
+    created_at: str
+    passkey_count: int
+    ledger_webauthn_count: int
+    ethereum_signer_count: int
+
+
+class ProducerCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class ProducerResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    created_at: str
+    revoked_at: str | None
+
+
+class ProducerKeyCreateRequest(BaseModel):
+    label: str | None = None
+
+
+class ProducerKeyResponse(BaseModel):
+    key_id: str
+    producer_id: str
+    api_key: str | None
+    created_at: str
+    label: str | None
 
 
 class WebhookEventResponse(BaseModel):
